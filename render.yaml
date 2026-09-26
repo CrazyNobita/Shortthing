@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: shortner-bypass-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: BOT_TOKEN
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_SESSION
+        sync: false
+      - key: DZHQ_BOT_USERNAME
+        value: "@DZHQ_BypassBot"
+      - key: ALEX_BOT_USERNAME
+        value: "@alexbypassbot"
+      - key: PUBLIC_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: BYPASS_IDLE_TIMEOUT_SEC
+        value: "30"
+      - key: ALEX_DM_TIMEOUT_SEC
+        value: "75"
+      - key: MAX_BYPASS_TIMEOUT_SEC
+        value: "120"
+      - key: RATE_LIMIT_SECONDS
+        value: "3"
+      - key: MAX_CONCURRENT_PER_USER
+        value: "2"
+      - key: TRACE_BOTS
+        value: "false"
