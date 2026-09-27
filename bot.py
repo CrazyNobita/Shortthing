@@ -23,6 +23,11 @@ import secrets
 import logging
 import asyncio
 import threading
+import shutil
+import platform
+import stat
+import subprocess
+import urllib.request
 import urllib.parse
 from enum import Enum
 from datetime import datetime, timezone
@@ -64,6 +69,7 @@ load_env()
 DEVELOPER = "@ProviderBotz"
 BRAND_NAME = "ProviderBotz"
 OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
+FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
 # Public Bot Credentials
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
@@ -87,8 +93,111 @@ PORT = int(os.environ.get("PORT", "5000"))
 SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "ProviderPro").strip()
 
-# Dynamic Public URL Detection
+# Dynamic Public URL Detection & Cloudflare Quick Tunnel
 _CURRENT_PUBLIC_URL: Optional[str] = None
+_TUNNEL_PROC: Optional[subprocess.Popen] = None
+_TUNNEL_LOCK = threading.Lock()
+
+def get_cloudflared_path() -> Optional[str]:
+    """Find or download a standalone cloudflared binary for the host OS & architecture."""
+    which_cf = shutil.which("cloudflared")
+    if which_cf and os.path.exists(which_cf):
+        return which_cf
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    bin_dir = os.path.join(base_dir, "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    bin_name = "cloudflared.exe" if system == "windows" else "cloudflared"
+
+    local_path = os.path.join(bin_dir, bin_name)
+    if os.path.exists(local_path) and os.access(local_path, os.X_OK):
+        return local_path
+
+    tmp_path = f"/tmp/{bin_name}"
+    if os.path.exists(tmp_path) and os.access(tmp_path, os.X_OK):
+        return tmp_path
+
+    base_url = "https://github.com/cloudflare/cloudflared/releases/latest/download"
+    download_url = None
+
+    if system == "linux":
+        if machine in ("x86_64", "amd64"):
+            download_url = f"{base_url}/cloudflared-linux-amd64"
+        elif machine in ("aarch64", "arm64"):
+            download_url = f"{base_url}/cloudflared-linux-arm64"
+        elif "arm" in machine:
+            download_url = f"{base_url}/cloudflared-linux-arm"
+    elif system == "darwin":
+        download_url = f"{base_url}/cloudflared-darwin-amd64.tgz"
+    elif system == "windows":
+        download_url = f"{base_url}/cloudflared-windows-amd64.exe"
+
+    if not download_url:
+        return None
+
+    try:
+        logger.info(f"🌐 Auto-downloading Cloudflare Quick Tunnel binary for {system}-{machine}...")
+        try:
+            urllib.request.urlretrieve(download_url, local_path)
+            os.chmod(local_path, os.stat(local_path).st_mode | stat.S_IEXEC | stat.S_IRUSR)
+            return local_path
+        except Exception:
+            urllib.request.urlretrieve(download_url, tmp_path)
+            os.chmod(tmp_path, os.stat(tmp_path).st_mode | stat.S_IEXEC | stat.S_IRUSR)
+            return tmp_path
+    except Exception as e:
+        logger.warning(f"⚠️ Could not auto-download cloudflared: {e}")
+        return None
+
+def start_auto_tunnel(port: int) -> Optional[str]:
+    """Start cloudflared tunnel to expose local port to a real public HTTPS URL."""
+    global _TUNNEL_PROC, _CURRENT_PUBLIC_URL
+    if _CURRENT_PUBLIC_URL and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
+        return _CURRENT_PUBLIC_URL
+
+    cf_bin = get_cloudflared_path()
+    if not cf_bin:
+        return None
+
+    try:
+        cmd = [cf_bin, "tunnel", "--url", f"http://127.0.0.1:{port}"]
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        _TUNNEL_PROC = proc
+
+        start_time = time.time()
+        tunnel_url = None
+        while time.time() - start_time < 12:
+            line = proc.stderr.readline()
+            if not line and proc.poll() is not None:
+                break
+            m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
+            if m:
+                tunnel_url = m.group(0)
+                _CURRENT_PUBLIC_URL = tunnel_url
+                logger.info(f"🚀 Real Public Cloudflare HTTPS URL generated: {tunnel_url}")
+                break
+
+        def _drain():
+            while proc.poll() is None:
+                try:
+                    proc.stderr.readline()
+                except Exception:
+                    break
+        threading.Thread(target=_drain, daemon=True, name="CloudflaredDrain").start()
+
+        return tunnel_url
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to launch cloudflared tunnel: {e}")
+        return None
 
 def get_auto_public_url() -> str:
     """Return the dynamically resolved public URL for the Mini App and webhooks."""
@@ -102,7 +211,7 @@ def get_auto_public_url() -> str:
         return _CURRENT_PUBLIC_URL
 
     app_url = os.environ.get("APP_URL", "").strip().rstrip("/")
-    if app_url:
+    if app_url and not app_url.startswith("http://localhost"):
         _CURRENT_PUBLIC_URL = app_url
         return _CURRENT_PUBLIC_URL
 
@@ -124,6 +233,14 @@ def get_auto_public_url() -> str:
             koyeb_url = f"https://{koyeb_url}"
         _CURRENT_PUBLIC_URL = koyeb_url
         return _CURRENT_PUBLIC_URL
+
+    # Auto create a real public URL if on localhost or no external domain
+    with _TUNNEL_LOCK:
+        if not _CURRENT_PUBLIC_URL or _CURRENT_PUBLIC_URL.startswith("http://localhost"):
+            tunnel_url = start_auto_tunnel(PORT)
+            if tunnel_url:
+                _CURRENT_PUBLIC_URL = tunnel_url
+                return _CURRENT_PUBLIC_URL
 
     return f"http://localhost:{PORT}"
 
@@ -932,13 +1049,20 @@ class TelegramBotAPI:
         text: str,
         reply_markup: Optional[InlineKeyboardMarkup] = None,
         reply_to_message_id: Optional[int] = None,
-        parse_mode: str = "HTML"
+        parse_mode: str = "HTML",
+        disable_web_page_preview: bool = False,
+        link_preview_options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
             "parse_mode": parse_mode
         }
+        if disable_web_page_preview:
+            payload["disable_web_page_preview"] = True
+            payload["link_preview_options"] = {"is_disabled": True}
+        elif link_preview_options:
+            payload["link_preview_options"] = link_preview_options
         if reply_markup:
             payload["reply_markup"] = reply_markup.to_dict()
         if reply_to_message_id:
@@ -957,7 +1081,9 @@ class TelegramBotAPI:
         message_id: int,
         text: str,
         reply_markup: Optional[InlineKeyboardMarkup] = None,
-        parse_mode: str = "HTML"
+        parse_mode: str = "HTML",
+        disable_web_page_preview: bool = False,
+        link_preview_options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "chat_id": chat_id,
@@ -965,6 +1091,11 @@ class TelegramBotAPI:
             "text": text,
             "parse_mode": parse_mode
         }
+        if disable_web_page_preview:
+            payload["disable_web_page_preview"] = True
+            payload["link_preview_options"] = {"is_disabled": True}
+        elif link_preview_options:
+            payload["link_preview_options"] = link_preview_options
         if reply_markup:
             payload["reply_markup"] = reply_markup.to_dict()
         res = await self.call("editMessageText", payload)
@@ -989,16 +1120,72 @@ class TelegramBotAPI:
             new_keyboard.append(new_row)
         return {"inline_keyboard": new_keyboard}
 
-    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None) -> Dict[str, Any]:
+    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None, show_alert: bool = False) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"callback_query_id": callback_query_id}
         if text:
             payload["text"] = text
+        if show_alert:
+            payload["show_alert"] = True
         return await self.call("answerCallbackQuery", payload)
+
+    async def get_chat_member(self, chat_id: Union[int, str], user_id: int) -> Dict[str, Any]:
+        return await self.call("getChatMember", {"chat_id": chat_id, "user_id": user_id})
 
     async def delete_message(self, chat_id: Union[int, str], message_id: int) -> Dict[str, Any]:
         return await self.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
 
 bot_api: Optional[TelegramBotAPI] = None
+
+def schedule_auto_delete(chat_id: int, message_id: int, delay_seconds: int = 150):
+    """Automatically deletes a message after 2.5 minutes (150 seconds)."""
+    async def _deleter():
+        try:
+            await asyncio.sleep(delay_seconds)
+            if bot_api:
+                await bot_api.delete_message(chat_id, message_id)
+        except Exception:
+            pass
+    asyncio.create_task(_deleter())
+
+# ══════════════════════════════════════════════════════════════
+#  USER DATABASE & PERSISTENCE (FOR OWNER BROADCASTING)
+# ══════════════════════════════════════════════════════════════
+USER_DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
+_USERS_SET: Set[int] = set()
+_USERS_LOCK = threading.Lock()
+
+def load_registered_users():
+    """Load persistent list of bot users from disk."""
+    global _USERS_SET
+    with _USERS_LOCK:
+        if os.path.exists(USER_DB_FILE):
+            try:
+                with open(USER_DB_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        _USERS_SET = set(int(x) for x in data if str(x).lstrip("-").isdigit())
+            except Exception as e:
+                logger.warning(f"Could not load users.json: {e}")
+        if OWNER_ID:
+            _USERS_SET.add(OWNER_ID)
+
+def register_user(user_id: int):
+    """Record an active user ID for broadcasts."""
+    if not user_id or user_id <= 0:
+        return
+    with _USERS_LOCK:
+        if user_id not in _USERS_SET:
+            _USERS_SET.add(user_id)
+            try:
+                with open(USER_DB_FILE, "w", encoding="utf-8") as f:
+                    json.dump(list(_USERS_SET), f)
+            except Exception as e:
+                logger.warning(f"Could not save users.json: {e}")
+
+def get_registered_users() -> List[int]:
+    """Return all active users."""
+    with _USERS_LOCK:
+        return list(_USERS_SET)
 
 # ══════════════════════════════════════════════════════════════
 #  REAL COLORED BUTTON BUILDERS (PRIMARY, SUCCESS, DANGER)
@@ -1006,26 +1193,14 @@ bot_api: Optional[TelegramBotAPI] = None
 def get_start_buttons() -> InlineKeyboardMarkup:
     """
     Start screen buttons with REAL native Bot API 9.4 colored styles:
-    - Primary (🔵 Dark Blue Accent)
-    - Success (🟢 Green)
-    - Danger  (🔴 Red)
+    - Mini App (Success / Green)
+    - Help (Danger / Red) | About (Success / Green)
     """
     public_url = get_auto_public_url()
-    add_group_url = f"https://t.me/{BOT_USERNAME}?startgroup=true" if BOT_USERNAME else "https://t.me/"
+    buttons = []
 
-    buttons = [
-        # PRIMARY BUTTON: 🔵 Add To Your Group (Dark Blue)
-        [
-            InlineKeyboardButton(
-                text="➕ ᴧᴅᴅ тσ ʏσυʀ ɢʀσυᴩ",
-                url=add_group_url,
-                style=ButtonStyle.PRIMARY
-            )
-        ]
-    ]
-
-    if public_url and not public_url.startswith("http://localhost"):
-        # SUCCESS BUTTON: 🟢 Open Mini App (Green)
+    # Mini App Button (always present with start message)
+    if public_url and public_url.startswith("https://"):
         buttons.append([
             InlineKeyboardButton(
                 text="🚀 σᴩєɴ ᴍιɴι ᴧᴩᴩ",
@@ -1033,25 +1208,25 @@ def get_start_buttons() -> InlineKeyboardMarkup:
                 style=ButtonStyle.SUCCESS
             )
         ])
+    else:
+        target_url = public_url if (public_url and not public_url.startswith("http://localhost")) else "https://t.me"
+        buttons.append([
+            InlineKeyboardButton(
+                text="🚀 σᴩєɴ ᴍιɴι ᴧᴩᴩ",
+                url=target_url,
+                style=ButtonStyle.SUCCESS
+            )
+        ])
 
-    # VIBRANT PROVIDERBOTZ TELEGRAM CHANNEL BUTTON (Primary Style)
+    # DANGER & SUCCESS ROW: ⛑️ Help (Red) | 👻 About (Green)
     buttons.append([
         InlineKeyboardButton(
-            text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
-            url=OFFICIAL_CHANNEL,
-            style=ButtonStyle.PRIMARY
-        )
-    ])
-
-    # DANGER & SUCCESS ROW: 🔴 Help (Red) | 🟢 About (Green)
-    buttons.append([
-        InlineKeyboardButton(
-            text="❌ ʜєʟᴩ",
+            text="⛑️ ʜєʟᴩ",
             callback_data="cmd_help",
             style=ButtonStyle.DANGER
         ),
         InlineKeyboardButton(
-            text="✅ ᴧʙσυт",
+            text="👻 ᴧʙσυт",
             callback_data="cmd_about",
             style=ButtonStyle.SUCCESS
         )
@@ -1084,7 +1259,7 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
         # SUCCESS BUTTON: 🟢 Open Link
         [
             InlineKeyboardButton(
-                text="🟢 🔗 ᴏᴩєɴ ʟιɴᴋ",
+                text="🔗 ᴏᴩєɴ ʟιɴᴋ",
                 url=final_url,
                 style=ButtonStyle.SUCCESS
             )
@@ -1096,7 +1271,7 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
         mini_app_copy_url = f"{public_url}/?copy={urllib.parse.quote(final_url)}"
         buttons.append([
             InlineKeyboardButton(
-                text="🔵 📋 ᴄσᴩʏ ʟιɴᴋ",
+                text="📋 ᴄσᴩʏ ʟιɴᴋ",
                 web_app={"url": mini_app_copy_url},
                 style=ButtonStyle.PRIMARY
             )
@@ -1105,7 +1280,7 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
     # VIBRANT PROVIDERBOTZ TELEGRAM CHANNEL BUTTON
     buttons.append([
         InlineKeyboardButton(
-            text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+            text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
             url=OFFICIAL_CHANNEL,
             style=ButtonStyle.PRIMARY
         )
@@ -1114,12 +1289,12 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
     # DANGER BUTTONS: 🔴 Retry | 🔴 Close
     buttons.append([
         InlineKeyboardButton(
-            text="🔴 🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
+            text="🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
             callback_data=retry_cb,
             style=ButtonStyle.DANGER
         ),
         InlineKeyboardButton(
-            text="🔴 ❌ ᴄʟσѕє",
+            text="❌ ᴄʟσѕє",
             callback_data="cmd_close",
             style=ButtonStyle.DANGER
         )
@@ -1133,21 +1308,26 @@ def get_failed_buttons(job_url: str) -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                text="🔴 🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
+                text="🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
                 callback_data=retry_cb,
                 style=ButtonStyle.DANGER
             )
         ],
         [
             InlineKeyboardButton(
-                text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
-                url=OFFICIAL_CHANNEL,
-                style=ButtonStyle.PRIMARY
+                text="⛑️ ʜєʟᴩ",
+                callback_data="cmd_help",
+                style=ButtonStyle.DANGER
+            ),
+            InlineKeyboardButton(
+                text="👻 ᴧʙσυт",
+                callback_data="cmd_about",
+                style=ButtonStyle.SUCCESS
             )
         ],
         [
             InlineKeyboardButton(
-                text="🔵 🏠 ʜσᴍє",
+                text="🏠 ʜσᴍє",
                 callback_data="cmd_home",
                 style=ButtonStyle.PRIMARY
             )
@@ -1160,19 +1340,19 @@ def get_help_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+                text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
                 url=OFFICIAL_CHANNEL,
                 style=ButtonStyle.PRIMARY
             )
         ],
         [
             InlineKeyboardButton(
-                text="🔵 🏠 ʜσᴍє",
+                text="🏠 ʜσᴍє",
                 callback_data="cmd_home",
                 style=ButtonStyle.PRIMARY
             ),
             InlineKeyboardButton(
-                text="🟢 ✅ ᴧʙσυт",
+                text="👻 ᴧʙσυт",
                 callback_data="cmd_about",
                 style=ButtonStyle.SUCCESS
             )
@@ -1184,21 +1364,41 @@ def get_about_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+                text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
                 url=OFFICIAL_CHANNEL,
                 style=ButtonStyle.PRIMARY
             )
         ],
         [
             InlineKeyboardButton(
-                text="🔵 🏠 ʜσᴍє",
+                text="🏠 ʜσᴍє",
                 callback_data="cmd_home",
                 style=ButtonStyle.PRIMARY
             ),
             InlineKeyboardButton(
-                text="🔴 ❌ ʜєʟᴩ",
+                text="⛑️ ʜєʟᴩ",
                 callback_data="cmd_help",
                 style=ButtonStyle.DANGER
+            )
+        ]
+    ])
+
+def get_fsub_buttons() -> InlineKeyboardMarkup:
+    """Force subscribe channel buttons."""
+    chnl_url = f"https://t.me/{FSUB_CHANNEL.lstrip('@')}" if FSUB_CHANNEL else OFFICIAL_CHANNEL
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                text="📢 ᴊσιɴ ᴏꜰꜰιᴄιᴧʟ ᴄʜᴧɴɴєʟ",
+                url=chnl_url,
+                style=ButtonStyle.PRIMARY
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔄 ᴊσιɴєᴅ / ʀєтʀʏ",
+                callback_data="cmd_fsub_check",
+                style=ButtonStyle.SUCCESS
             )
         ]
     ])
@@ -1313,46 +1513,82 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
         engine.cleanup_job(job_id)
 
     # Output formatted PROPERLY like AlexBypassBot message:
-    # No raw JSON! No internal source name shown! Single tap monospace copy!
+    # No raw JSON! No internal source name shown! Stylized fonts, no copycode on link, preview off, auto delete in 2 minutes!
     if result.get("status") is True and result.get("url"):
         final_url = result["url"]
         duration_ms = int(result.get("response_ms", "1000ms").replace("ms", ""))
         duration_formatted = f"{duration_ms / 1000:.1f}s" if duration_ms >= 1000 else f"{duration_ms}ms"
 
         res_text = (
-            f"⚡ <b>Link Bypassed Successfully!</b>\n\n"
-            f"🔗 <b>Original Link:</b>\n"
-            f"<code>{html.escape(target_url)}</code>\n\n"
-            f"🎯 <b>Bypassed Link:</b>\n"
-            f"<code>{html.escape(final_url)}</code>\n\n"
-            f"⏱ <b>Time Taken:</b> <code>{duration_formatted}</code>\n\n"
-            f"👆 <i>Tap the bypassed link above to copy immediately!</i>"
+            f"⚡ <b>{to_small_caps('Link Bypassed Successfully!')}</b>\n\n"
+            f"🔗 <b>{to_small_caps('Original Link')}:</b>\n"
+            f"{html.escape(target_url)}\n\n"
+            f"🎯 <b>{to_small_caps('Bypassed Link')}:</b>\n"
+            f"{html.escape(final_url)}\n\n"
+            f"⏱ <b>{to_small_caps('Time Taken')}:</b> <code>{duration_formatted}</code>\n\n"
+            f"👆 <i>{to_small_caps('Tap the bypassed link above to copy immediately!')}</i>"
         )
         reply_markup = get_result_buttons(final_url, target_url)
+        sent_res = None
         if status_msg_id:
             try:
-                await bot_api.edit_message_text(chat_id, status_msg_id, res_text, reply_markup=reply_markup)
+                sent_res = await bot_api.edit_message_text(
+                    chat_id,
+                    status_msg_id,
+                    res_text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
             except Exception:
-                await bot_api.send_message(chat_id, res_text, reply_markup=reply_markup)
+                sent_res = await bot_api.send_message(
+                    chat_id,
+                    res_text,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
         else:
-            await bot_api.send_message(chat_id, res_text, reply_markup=reply_markup)
+            sent_res = await bot_api.send_message(
+                chat_id,
+                res_text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+
+        # Auto delete in 2.5 minutes (150 seconds) as requested
+        final_msg_id = status_msg_id or (sent_res.get("result", {}).get("message_id") if isinstance(sent_res, dict) else None)
+        if final_msg_id:
+            schedule_auto_delete(chat_id, final_msg_id, 150)
     else:
         err_text = (
-            f"❌ <b>Bypass Failed!</b>\n\n"
-            f"⚠️ <i>The link could not be bypassed or expired.</i>\n\n"
-            f"🔗 <b>Original Link:</b>\n"
-            f"<code>{html.escape(target_url)}</code>\n\n"
-            f"• <i>Please check if the link is active and valid.</i>\n"
-            f"• <i>Tap Retry below to try bypassing again.</i>"
+            f"❌ <b>{to_small_caps('Bypass Failed!')}</b>\n\n"
+            f"⚠️ <i>{to_small_caps('The link could not be bypassed or expired.')}</i>\n\n"
+            f"🔗 <b>{to_small_caps('Original Link')}:</b>\n"
+            f"{html.escape(target_url)}\n\n"
+            f"• <i>{to_small_caps('Please check if the link is active and valid.')}</i>\n"
+            f"• <i>{to_small_caps('Tap Retry below to try bypassing again.')}</i>"
         )
         reply_markup = get_failed_buttons(target_url)
         if status_msg_id:
             try:
-                await bot_api.edit_message_text(chat_id, status_msg_id, err_text, reply_markup=reply_markup)
+                await bot_api.edit_message_text(chat_id, status_msg_id, err_text, reply_markup=reply_markup, disable_web_page_preview=True)
             except Exception:
-                await bot_api.send_message(chat_id, err_text, reply_markup=reply_markup)
+                await bot_api.send_message(chat_id, err_text, reply_markup=reply_markup, disable_web_page_preview=True)
         else:
-            await bot_api.send_message(chat_id, err_text, reply_markup=reply_markup)
+            await bot_api.send_message(chat_id, err_text, reply_markup=reply_markup, disable_web_page_preview=True)
+
+async def check_user_fsub(user_id: int) -> bool:
+    """Check if user has joined the official channel @ProviderBotz."""
+    if not FSUB_CHANNEL or not bot_api:
+        return True
+    try:
+        res = await bot_api.get_chat_member(FSUB_CHANNEL, user_id)
+        if res.get("ok"):
+            status = res.get("result", {}).get("status", "")
+            return status in ("creator", "administrator", "member", "restricted")
+        return True
+    except Exception as e:
+        _trace("FSUB", f"Chat member check exception: {e} (allowing user)")
+        return True
 
 async def run_bot_polling():
     """Continuous async long-polling loop for the public bot."""
@@ -1395,40 +1631,155 @@ async def run_bot_polling():
                     if not text or not chat_id:
                         continue
 
+                    # Record user for broadcast system
+                    if user_id:
+                        register_user(user_id)
+
+                    # Force Subscription check for private chat users
+                    if chat_id > 0 and user_id:
+                        is_member = await check_user_fsub(user_id)
+                        if not is_member:
+                            fsub_msg = (
+                                f"⚠️ <b>{to_small_caps('access denied!')}</b>\n\n"
+                                f"Hello {first_name} 🌹\n"
+                                f"To use this bot, you must first join our official updates channel.\n\n"
+                                f"📢 <b>{to_small_caps('channel')}:</b> {FSUB_CHANNEL}\n\n"
+                                f"<i>Tap Join Channel below, then tap 'Joined / Retry'!</i>"
+                            )
+                            await bot_api.send_message(chat_id, fsub_msg, reply_markup=get_fsub_buttons(), disable_web_page_preview=True)
+                            continue
+
                     if text == "/start":
                         start_text = (
                             f"Welcome {first_name} 🌹\n\n"
                             f"This is the fastest and powerful auto link bypass bot ∆\n\n"
-                            f"⚡ <b>ᴩʀσᴠιᴅєʀʙσтᴢ ᴇɴɢιɴє</b>\n"
+                            f"⚡ <b>{to_small_caps('ProviderBotz Engine')}</b>\n"
                             f"Send any supported shortener link below to bypass instantly.\n\n"
-                            f"📢 <b>Official Updates:</b> @ProviderBotz"
+                            f"📢 <b>{to_small_caps('Official Updates')}:</b> @ProviderBotz"
                         )
-                        await bot_api.send_message(chat_id, start_text, reply_markup=get_start_buttons())
+                        await bot_api.send_message(chat_id, start_text, reply_markup=get_start_buttons(), disable_web_page_preview=True)
 
                     elif text == "/help":
                         help_text = (
                             f"📖 <b>{to_small_caps('help guide')}</b>\n\n"
                             f"1. <b>{to_small_caps('send a link')}</b>: Simply paste any supported shortlink.\n"
-                            f"2. <b>{to_small_caps('automatic processing')}</b>: The bot resolves the link through DZHQ and Alex DM engines.\n"
-                            f"3. <b>{to_small_caps('clean result')}</b>: Only the pure final destination URL is returned (all promotional ads stripped).\n"
-                            f"4. <b>{to_small_caps('copy link')}</b>: Tap on the monospace URL to copy instantly to your clipboard.\n"
-                            f"5. <b>{to_small_caps('retry system')}</b>: If a link temporarily fails, tap the Retry button.\n\n"
-                            f"🛡 <i>{to_small_caps('powered by')} @ProviderBotz</i>"
+                            f"2. <b>{to_small_caps('automatic processing')}</b>: The bot resolves the link through automatic processing.\n"
+                            f"3. <b>{to_small_caps('clean result')}</b>: Only the pure final destination URL is returned.\n"
+                            f"4. <b>{to_small_caps('copy link')}</b>: Tap on the link to copy instantly.\n\n"
+                            f"🛡 <i>{to_small_caps('powered by')} {DEVELOPER}</i>"
                         )
-                        await bot_api.send_message(chat_id, help_text, reply_markup=get_help_buttons())
+                        await bot_api.send_message(chat_id, help_text, reply_markup=get_help_buttons(), disable_web_page_preview=True)
 
                     elif text == "/about":
                         about_text = (
                             f"ℹ️ <b>{to_small_caps('about')} ShortnerBypass</b>\n\n"
                             f"• <b>{to_small_caps('developer')}</b>: {DEVELOPER}\n"
-                            f"• <b>{to_small_caps('engines')}</b>: DZHQ Group Engine + Alex DM Engine\n"
+                            f"• <b>{to_small_caps('engines')}</b>: ProviderBotz V3.0.0\n"
                             f"• <b>{to_small_caps('speed')}</b>: High-Speed Async Telethon Userbot\n"
-                            f"• <b>{to_small_caps('clean links')}</b>: Zero ads, zero spam channels\n"
-                            f"• <b>{to_small_caps('buttons')}</b>: Native Bot API 9.4 Colored Styles\n"
                             f"• <b>{to_small_caps('mini app')}</b>: Obsidian Red Glassmorphism Dashboard\n\n"
                             f"🚀 <i>{to_small_caps('crafted for speed and reliability')}</i>"
                         )
-                        await bot_api.send_message(chat_id, about_text, reply_markup=get_about_buttons())
+                        await bot_api.send_message(chat_id, about_text, reply_markup=get_about_buttons(), disable_web_page_preview=True)
+
+                    elif text.startswith(("/broadcast", "/bc")):
+                        is_owner = bool(OWNER_ID and user_id == OWNER_ID)
+                        if not is_owner:
+                            denied_msg = (
+                                f"⛔ <b>{to_small_caps('access denied!')}</b>\n\n"
+                                f"<i>{to_small_caps('this command is strictly restricted to the bot owner.')}</i>"
+                            )
+                            await bot_api.send_message(chat_id, denied_msg, disable_web_page_preview=True)
+                            continue
+
+                        # Extract broadcast content
+                        reply_to = msg.get("reply_to_message")
+                        bc_text = ""
+                        if reply_to:
+                            bc_text = (reply_to.get("text") or reply_to.get("caption") or "").strip()
+                        if not bc_text:
+                            parts = text.split(None, 1)
+                            if len(parts) > 1:
+                                bc_text = parts[1].strip()
+
+                        if not bc_text:
+                            help_bc = (
+                                f"📢 <b>{to_small_caps('owner broadcast system')}</b>\n\n"
+                                f"• <b>{to_small_caps('usage')} 1:</b> <code>/broadcast &lt;message&gt;</code>\n"
+                                f"• <b>{to_small_caps('usage')} 2:</b> <i>{to_small_caps('reply to any message with')}</i> <code>/broadcast</code>\n\n"
+                                f"👥 <b>{to_small_caps('registered users')}:</b> <code>{len(get_registered_users())}</code>"
+                            )
+                            await bot_api.send_message(chat_id, help_bc, disable_web_page_preview=True)
+                            continue
+
+                        targets = get_registered_users()
+                        if not targets:
+                            targets = [chat_id]
+
+                        status_init = await bot_api.send_message(
+                            chat_id,
+                            f"🚀 <b>{to_small_caps('broadcasting to')} {len(targets)} {to_small_caps('users...')}</b>",
+                            disable_web_page_preview=True
+                        )
+                        s_msg_id = status_init.get("result", {}).get("message_id") if isinstance(status_init, dict) else None
+
+                        async def _run_broadcast_task(broadcast_content: str, uids: List[int], notify_chat: int, stat_id: Optional[int]):
+                            t0_bc = time.time()
+                            ok_count = 0
+                            fail_count = 0
+                            bc_payload = (
+                                f"📢 <b>{to_small_caps('official announcement')}</b>\n\n"
+                                f"{broadcast_content}\n\n"
+                                f"🛡 <i>{to_small_caps('powered by')} {DEVELOPER}</i>"
+                            )
+                            for target_uid in uids:
+                                try:
+                                    resp = await bot_api.send_message(target_uid, bc_payload, disable_web_page_preview=True)
+                                    if resp and resp.get("ok"):
+                                        ok_count += 1
+                                    else:
+                                        fail_count += 1
+                                except Exception:
+                                    fail_count += 1
+                                await asyncio.sleep(0.05)
+
+                            dur = round(time.time() - t0_bc, 2)
+                            report_text = (
+                                f"✅ <b>{to_small_caps('broadcast completed successfully!')}</b>\n\n"
+                                f"• 👥 <b>{to_small_caps('total targets')}:</b> <code>{len(uids)}</code>\n"
+                                f"• 🚀 <b>{to_small_caps('delivered')}:</b> <code>{ok_count}</code>\n"
+                                f"• ❌ <b>{to_small_caps('failed / blocked')}:</b> <code>{fail_count}</code>\n"
+                                f"• ⏱ <b>{to_small_caps('time elapsed')}:</b> <code>{dur}s</code>\n\n"
+                                f"⚡ <i>{to_small_caps('providerbotz broadcast core')}</i>"
+                            )
+                            if stat_id:
+                                try:
+                                    await bot_api.edit_message_text(notify_chat, stat_id, report_text, disable_web_page_preview=True)
+                                    return
+                                except Exception:
+                                    pass
+                            await bot_api.send_message(notify_chat, report_text, disable_web_page_preview=True)
+
+                        asyncio.create_task(_run_broadcast_task(bc_text, targets, chat_id, s_msg_id))
+
+                    elif text in ("/stats", "/users"):
+                        is_owner = bool(OWNER_ID and user_id == OWNER_ID)
+                        if is_owner:
+                            stats_text = (
+                                f"📊 <b>{to_small_caps('bot statistics')}</b>\n\n"
+                                f"• 👥 <b>{to_small_caps('total registered users')}:</b> <code>{len(get_registered_users())}</code>\n"
+                                f"• ⚡ <b>{to_small_caps('total bypasses')}:</b> <code>{engine.total_bypasses}</code>\n"
+                                f"• ✅ <b>{to_small_caps('successful')}:</b> <code>{engine.successful_bypasses}</code>\n"
+                                f"• ❌ <b>{to_small_caps('failed')}:</b> <code>{engine.failed_bypasses}</code>\n"
+                                f"• 🤖 <b>{to_small_caps('userbot online')}:</b> <code>{engine.userbot_connected}</code>\n"
+                                f"• 🌐 <b>{to_small_caps('public url')}:</b> {get_auto_public_url()}"
+                            )
+                            await bot_api.send_message(chat_id, stats_text, disable_web_page_preview=True)
+                        else:
+                            denied_msg = (
+                                f"⛔ <b>{to_small_caps('access denied!')}</b>\n\n"
+                                f"<i>{to_small_caps('this command is strictly restricted to the bot owner.')}</i>"
+                            )
+                            await bot_api.send_message(chat_id, denied_msg, disable_web_page_preview=True)
 
                     elif text.startswith("/bypass"):
                         url_to_bypass = extract_input_url(msg)
@@ -1440,7 +1791,7 @@ async def run_bot_polling():
                                 f"<code>/bypass https://example.com/shortlink</code>\n\n"
                                 f"<i>Or simply paste any supported shortener link directly into the chat!</i>"
                             )
-                            await bot_api.send_message(chat_id, bypass_help)
+                            await bot_api.send_message(chat_id, bypass_help, disable_web_page_preview=True)
 
                     else:
                         target = extract_input_url(msg)
@@ -1456,41 +1807,63 @@ async def run_bot_polling():
                     chat_id = cq_msg.get("chat", {}).get("id")
                     msg_id = cq_msg.get("message_id")
                     user = cq.get("from", {})
+                    user_id = user.get("id")
                     first_name = html.escape(user.get("first_name", "Friend") or "Friend")
+                    if user_id:
+                        register_user(user_id)
 
                     await bot_api.answer_callback_query(cq_id)
 
-                    if cq_data == "cmd_home":
+                    if cq_data == "cmd_fsub_check":
+                        is_member = await check_user_fsub(user_id)
+                        if is_member:
+                            await bot_api.answer_callback_query(cq_id, text="✅ Membership verified! Welcome.")
+                            start_text = (
+                                f"Welcome {first_name} 🌹\n\n"
+                                f"This is the fastest and powerful auto link bypass bot ∆\n\n"
+                                f"⚡ <b>{to_small_caps('ProviderBotz Engine')}</b>\n"
+                                f"Send any supported shortener link below to bypass instantly.\n\n"
+                                f"📢 <b>{to_small_caps('Official Updates')}:</b> @ProviderBotz"
+                            )
+                            await bot_api.edit_message_text(chat_id, msg_id, start_text, reply_markup=get_start_buttons(), disable_web_page_preview=True)
+                        else:
+                            await bot_api.answer_callback_query(
+                                cq_id,
+                                text="❌ You haven't joined @ProviderBotz yet! Please join first.",
+                                show_alert=True
+                            )
+
+                    elif cq_data == "cmd_home":
                         start_text = (
                             f"Welcome {first_name} 🌹\n\n"
-                            f"This is the fastest and powerfull auto link bypass bot ∆\n\n"
-                            f"⚡ <b>ᴩʀσᴠιᴅєʀʙσтᴢ ᴇɴɢιɴє</b>\n"
+                            f"This is the fastest and powerful auto link bypass bot ∆\n\n"
+                            f"⚡ <b>{to_small_caps('ProviderBotz Engine')}</b>\n"
                             f"Send any supported shortener link below to bypass instantly.\n\n"
-                            f"📢 <b>Official Updates:</b> @ProviderBotz"
+                            f"📢 <b>{to_small_caps('Official Updates')}:</b> @ProviderBotz"
                         )
-                        await bot_api.edit_message_text(chat_id, msg_id, start_text, reply_markup=get_start_buttons())
+                        await bot_api.edit_message_text(chat_id, msg_id, start_text, reply_markup=get_start_buttons(), disable_web_page_preview=True)
 
                     elif cq_data == "cmd_help":
                         help_text = (
                             f"📖 <b>{to_small_caps('help guide')}</b>\n\n"
                             f"1. <b>{to_small_caps('send a link')}</b>: Simply paste any supported shortlink.\n"
-                            f"2. <b>{to_small_caps('automatic processing')}</b>: The bot resolves the link through DZHQ and Alex DM engines.\n"
+                            f"2. <b>{to_small_caps('automatic processing')}</b>: The bot resolves the link through automatic processing.\n"
                             f"3. <b>{to_small_caps('clean result')}</b>: Only the pure final destination URL is returned.\n"
-                            f"4. <b>{to_small_caps('copy link')}</b>: Tap on the monospace URL to copy instantly.\n\n"
-                            f"🛡 <i>{to_small_caps('powered by')} @ProviderBotz</i>"
+                            f"4. <b>{to_small_caps('copy link')}</b>: Tap on the link to copy instantly.\n\n"
+                            f"🛡 <i>{to_small_caps('powered by')} {DEVELOPER}</i>"
                         )
-                        await bot_api.edit_message_text(chat_id, msg_id, help_text, reply_markup=get_help_buttons())
+                        await bot_api.edit_message_text(chat_id, msg_id, help_text, reply_markup=get_help_buttons(), disable_web_page_preview=True)
 
                     elif cq_data == "cmd_about":
                         about_text = (
                             f"ℹ️ <b>{to_small_caps('about')} ShortnerBypass</b>\n\n"
                             f"• <b>{to_small_caps('developer')}</b>: {DEVELOPER}\n"
-                            f"• <b>{to_small_caps('engines')}</b>: DZHQ Group Engine + Alex DM Engine\n"
+                            f"• <b>{to_small_caps('engines')}</b>: ProviderBotz V3.0.0\n"
                             f"• <b>{to_small_caps('speed')}</b>: High-Speed Async Telethon Userbot\n"
                             f"• <b>{to_small_caps('mini app')}</b>: Obsidian Red Glassmorphism Dashboard\n\n"
                             f"🚀 <i>{to_small_caps('crafted for speed and reliability')}</i>"
                         )
-                        await bot_api.edit_message_text(chat_id, msg_id, about_text, reply_markup=get_about_buttons())
+                        await bot_api.edit_message_text(chat_id, msg_id, about_text, reply_markup=get_about_buttons(), disable_web_page_preview=True)
 
                     elif cq_data == "cmd_close":
                         await bot_api.delete_message(chat_id, msg_id)
@@ -1610,6 +1983,7 @@ def route_admin_status():
 async def main_async():
     global GLOBAL_ASYNC_LOOP
     GLOBAL_ASYNC_LOOP = asyncio.get_running_loop()
+    load_registered_users()
 
     # 1. Start Telethon Userbot (Strictly handles DZHQ Group + Alex DM)
     if TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_SESSION:
