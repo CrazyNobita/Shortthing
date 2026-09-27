@@ -1109,6 +1109,54 @@ def get_failed_buttons(job_url: str) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(buttons)
 
+def get_help_buttons() -> InlineKeyboardMarkup:
+    """Help screen buttons with native Bot API 9.4 styles."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+                url=OFFICIAL_CHANNEL,
+                style=ButtonStyle.PRIMARY
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏠 ʜσᴍє",
+                callback_data="cmd_home",
+                style=ButtonStyle.PRIMARY
+            ),
+            InlineKeyboardButton(
+                text="✅ ᴧʙσυт",
+                callback_data="cmd_about",
+                style=ButtonStyle.SUCCESS
+            )
+        ]
+    ])
+
+def get_about_buttons() -> InlineKeyboardMarkup:
+    """About screen buttons with native Bot API 9.4 styles."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+                url=OFFICIAL_CHANNEL,
+                style=ButtonStyle.PRIMARY
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏠 ʜσᴍє",
+                callback_data="cmd_home",
+                style=ButtonStyle.PRIMARY
+            ),
+            InlineKeyboardButton(
+                text="❌ ʜєʟᴩ",
+                callback_data="cmd_help",
+                style=ButtonStyle.DANGER
+            )
+        ]
+    ])
+
 # ══════════════════════════════════════════════════════════════
 #  TELEGRAM BOT WORKER & LONG POLLING
 # ══════════════════════════════════════════════════════════════
@@ -1255,14 +1303,7 @@ async def run_bot_polling():
                             f"5. <b>{to_small_caps('retry system')}</b>: If a link temporarily fails, tap the Retry button.\n\n"
                             f"🛡 <i>{to_small_caps('powered by')} @ProviderBotz</i>"
                         )
-                        help_buttons = InlineKeyboardMarkup([
-                            [InlineKeyboardButton(text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ", url=OFFICIAL_CHANNEL, style=ButtonStyle.PRIMARY)],
-                            [
-                                InlineKeyboardButton(text="🔵 🏠 ʜσᴍє", callback_data="cmd_home", style=ButtonStyle.PRIMARY),
-                                InlineKeyboardButton(text="🟢 ✅ ᴧʙσυт", callback_data="cmd_about", style=ButtonStyle.SUCCESS)
-                            ]
-                        ])
-                        await bot_api.send_message(chat_id, help_text, reply_markup=help_buttons)
+                        await bot_api.send_message(chat_id, help_text, reply_markup=get_help_buttons())
 
                     elif text == "/about":
                         about_text = (
@@ -1275,14 +1316,15 @@ async def run_bot_polling():
                             f"• <b>{to_small_caps('mini app')}</b>: Obsidian Red Glassmorphism Dashboard\n\n"
                             f"🚀 <i>{to_small_caps('crafted for speed and reliability')}</i>"
                         )
-                        about_buttons = InlineKeyboardMarkup([
-                            [InlineKeyboardButton(text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ", url=OFFICIAL_CHANNEL, style=ButtonStyle.PRIMARY)],
-                            [
-                                InlineKeyboardButton(text="🔵 🏠 ʜσᴍє", callback_data="cmd_home", style=ButtonStyle.PRIMARY),
-                                InlineKeyboardButton(text="🔴 ❌ ʜєʟᴩ", callback_data="cmd_help", style=ButtonStyle.DANGER)
-                            ]
-                        ])
-                        await bot_api.send_message(chat_id, about_text, reply_markup=about_buttons)
+                        await bot_api.send_message(chat_id, about_text, reply_markup=get_about_buttons())
+
+                    elif text == "/bypass" or text.startswith("/bypass@"):
+                        bypass_help = (
+                            f"⚠️ <b>{to_small_caps('please provide a link')}</b>:\n"
+                            f"<code>/bypass https://example.com/shortlink</code>\n\n"
+                            f"<i>Or simply paste any supported shortener link directly into the chat!</i>"
+                        )
+                        await bot_api.send_message(chat_id, bypass_help)
 
                     else:
                         urls = extract_valid_urls_from_text(text)
@@ -1321,14 +1363,7 @@ async def run_bot_polling():
                             f"4. <b>{to_small_caps('copy link')}</b>: Tap on the monospace URL to copy instantly.\n\n"
                             f"🛡 <i>{to_small_caps('powered by')} @ProviderBotz</i>"
                         )
-                        help_buttons = InlineKeyboardMarkup([
-                            [InlineKeyboardButton(text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ", url=OFFICIAL_CHANNEL, style=ButtonStyle.PRIMARY)],
-                            [
-                                InlineKeyboardButton(text="🏠 ʜσᴍє", callback_data="cmd_home", style=ButtonStyle.PRIMARY),
-                                InlineKeyboardButton(text="✅ ᴧʙσυт", callback_data="cmd_about", style=ButtonStyle.SUCCESS)
-                            ]
-                        ])
-                        await bot_api.edit_message_text(chat_id, msg_id, help_text, reply_markup=help_buttons)
+                        await bot_api.edit_message_text(chat_id, msg_id, help_text, reply_markup=get_help_buttons())
 
                     elif cq_data == "cmd_about":
                         about_text = (
@@ -1339,14 +1374,7 @@ async def run_bot_polling():
                             f"• <b>{to_small_caps('mini app')}</b>: Obsidian Red Glassmorphism Dashboard\n\n"
                             f"🚀 <i>{to_small_caps('crafted for speed and reliability')}</i>"
                         )
-                        about_buttons = InlineKeyboardMarkup([
-                            [InlineKeyboardButton(text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ", url=OFFICIAL_CHANNEL, style=ButtonStyle.PRIMARY)],
-                            [
-                                InlineKeyboardButton(text="🏠 ʜσᴍє", callback_data="cmd_home", style=ButtonStyle.PRIMARY),
-                                InlineKeyboardButton(text="❌ ʜєʟᴩ", callback_data="cmd_help", style=ButtonStyle.DANGER)
-                            ]
-                        ])
-                        await bot_api.edit_message_text(chat_id, msg_id, about_text, reply_markup=about_buttons)
+                        await bot_api.edit_message_text(chat_id, msg_id, about_text, reply_markup=get_about_buttons())
 
                     elif cq_data == "cmd_close":
                         await bot_api.delete_message(chat_id, msg_id)
