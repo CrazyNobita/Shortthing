@@ -1157,10 +1157,30 @@ def get_about_buttons() -> InlineKeyboardMarkup:
         ]
     ])
 
+def extract_input_url(text: str) -> Optional[str]:
+    """Extract any target URL from a user message (handles https, http, or domain.com/path)."""
+    if not text:
+        return None
+    # 1. Match full http/https URLs
+    m = re.search(r'https?://[^\s\n\)\]>"\']+', text)
+    if m:
+        return clean_url(m.group(0))
+    # 2. Match bare domain/path (e.g. droplink.co/abc, gplinks.co/xyz)
+    m_bare = re.search(r'(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s]*)?', text)
+    if m_bare:
+        candidate = m_bare.group(0)
+        if not candidate.startswith(('@', '/')) and '.' in candidate and not candidate.startswith(('t.me/', 'telegram.me/')):
+            return "https://" + clean_url(candidate)
+    return None
+
 # ══════════════════════════════════════════════════════════════
-#  TELEGRAM BOT WORKER & LONG POLLING
+#  TELEGRAM BOT WORKER & LONG POLLING (ALEX BYPASS BOT STYLE)
 # ══════════════════════════════════════════════════════════════
 async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_msg_id: Optional[int] = None):
+    """
+    Automatically bypasses links with dynamic animated progress frames
+    and displays the final clean result formatted like @alexbypassbot (no source).
+    """
     allowed, rate_msg = engine.check_user_rate_limit(user_id)
     if not allowed:
         await bot_api.send_message(chat_id, rate_msg, reply_to_message_id=reply_msg_id)
@@ -1168,9 +1188,18 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
 
     job_id, _ = engine.create_job(target_url, user_id=user_id, source="telegram")
 
+    # Initial Animation Frame (10%)
+    initial_frame = (
+        f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
+        f"┃\n"
+        f"┃ [▰▱▱▱▱▱▱▱▱▱] 10%\n"
+        f"┃ 🔍 <i>{to_small_caps('fetching link data...')}</i>\n"
+        f"┃\n"
+        f"╰━━━━━━━━━━━━━━━━━━━━╯"
+    )
     initial_msg = await bot_api.send_message(
         chat_id,
-        f"🔄 <b>{to_small_caps('bypassing...')}</b>\n\nPlease wait while your link is being processed.",
+        initial_frame,
         reply_to_message_id=reply_msg_id
     )
     status_msg_id = initial_msg.get("result", {}).get("message_id")
@@ -1178,23 +1207,52 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
     stop_updater = asyncio.Event()
 
     async def _status_ticker():
-        steps = [
-            f"🔄 <b>{to_small_caps('bypassing...')}</b>\n\nConnecting to bypass engine...",
-            f"⏳ <b>{to_small_caps('processing...')}</b>\n\nResolving shortlink through external bot...",
-            f"🔍 <b>{to_small_caps('verifying...')}</b>\n\nParsing incoming Telegram signals...",
-            f"🔗 <b>{to_small_caps('result detected...')}</b>\n\nValidating final link..."
+        # Dynamic animation frames like @alexbypassbot
+        frames = [
+            (
+                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
+                f"┃\n"
+                f"┃ [▰▰▰▱▱▱▱▱▱▱] 35%\n"
+                f"┃ 🔓 <i>{to_small_caps('bypassing security & captcha...')}</i>\n"
+                f"┃\n"
+                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+            ),
+            (
+                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
+                f"┃\n"
+                f"┃ [▰▰▰▰▰▱▱▱▱▱] 60%\n"
+                f"┃ ⚙️ <i>{to_small_caps('decoding shortlink tokens...')}</i>\n"
+                f"┃\n"
+                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+            ),
+            (
+                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
+                f"┃\n"
+                f"┃ [▰▰▰▰▰▰▰▰▱▱] 82%\n"
+                f"┃ 📡 <i>{to_small_caps('solving destination redirect...')}</i>\n"
+                f"┃\n"
+                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+            ),
+            (
+                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
+                f"┃\n"
+                f"┃ [▰▰▰▰▰▰▰▰▰▱] 95%\n"
+                f"┃ ✨ <i>{to_small_caps('verifying final destination...')}</i>\n"
+                f"┃\n"
+                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+            )
         ]
         idx = 0
         while not stop_updater.is_set():
-            await asyncio.sleep(3.5)
+            await asyncio.sleep(1.8)
             if stop_updater.is_set():
                 break
-            idx = (idx + 1) % len(steps)
             if status_msg_id:
                 try:
-                    await bot_api.edit_message_text(chat_id, status_msg_id, steps[idx])
+                    await bot_api.edit_message_text(chat_id, status_msg_id, frames[idx])
                 except Exception:
                     pass
+            idx = (idx + 1) % len(frames)
 
     ticker_task = asyncio.create_task(_status_ticker())
 
@@ -1205,18 +1263,26 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
         ticker_task.cancel()
         engine.cleanup_job(job_id)
 
-    # Output ONLY the clean bypassed link with zero ads, plus colored buttons
+    # Output formatted PROPERLY like @alexbypassbot (No source or internal provider name)
     if result.get("status") is True and result.get("url"):
         final_url = result["url"]
-        provider_name = result.get("source", "DZHQ").upper()
+        duration_ms = int(result.get("response_ms", "1000ms").replace("ms", ""))
+        duration_formatted = f"{duration_ms / 1000:.1f}s" if duration_ms >= 1000 else f"{duration_ms}ms"
+
         res_text = (
-            f"✅ <b>{to_small_caps('bypass complete')}</b>\n\n"
-            f"🔗 <b>{to_small_caps('bypassed link')}:</b>\n"
-            f"<code>{html.escape(final_url)}</code>\n\n"
-            f"📋 <i>(Tap the link above to copy immediately)</i>\n\n"
-            f"⚡ <b>{to_small_caps('provider')}:</b> <code>{provider_name}</code>\n"
-            f"⏱ <b>{to_small_caps('speed')}:</b> <code>{result.get('response_ms', '0ms')}</code>\n\n"
-            f"📢 <b>{to_small_caps('updates')}:</b> @ProviderBotz"
+            f"╭━━━━〔 ⚡ <b>{to_small_caps('bypass complete')}</b> ⚡ 〕━━━━╮\n"
+            f"┃\n"
+            f"┃ 🔗 <b>{to_small_caps('bypassed link')}:</b>\n"
+            f"┃ <code>{html.escape(final_url)}</code>\n"
+            f"┃\n"
+            f"┃ 🌐 <b>{to_small_caps('original link')}:</b>\n"
+            f"┃ <code>{html.escape(target_url)}</code>\n"
+            f"┃\n"
+            f"┃ ⏱ <b>{to_small_caps('time taken')}:</b> <code>{duration_formatted}</code>\n"
+            f"┃ ⚡ <b>{to_small_caps('powered by')}:</b> @ProviderBotz\n"
+            f"┃\n"
+            f"╰━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"
+            f"📋 <i>(Tap on the bypassed link above to copy)</i>"
         )
         reply_markup = get_result_buttons(final_url, target_url)
         if status_msg_id:
@@ -1228,10 +1294,17 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
             await bot_api.send_message(chat_id, res_text, reply_markup=reply_markup)
     else:
         err_text = (
-            f"❌ <b>{to_small_caps('bypass failed')}</b>\n\n"
-            f"The link could not be bypassed right now.\n\n"
-            f"• <i>Please ensure the link is active and supported.</i>\n"
-            f"• <i>You can retry using the button below.</i>"
+            f"╭━━━━〔 ❌ <b>{to_small_caps('bypass failed')}</b> 〕━━━━╮\n"
+            f"┃\n"
+            f"┃ ⚠️ <b>{to_small_caps('the link could not be bypassed.')}</b>\n"
+            f"┃\n"
+            f"┃ 🌐 <b>{to_small_caps('original link')}:</b>\n"
+            f"┃ <code>{html.escape(target_url)}</code>\n"
+            f"┃\n"
+            f"┃ • <i>Please check if the link is active.</i>\n"
+            f"┃ • <i>Tap retry to try again.</i>\n"
+            f"┃\n"
+            f"╰━━━━━━━━━━━━━━━━━━━━╯"
         )
         reply_markup = get_failed_buttons(target_url)
         if status_msg_id:
@@ -1318,18 +1391,22 @@ async def run_bot_polling():
                         )
                         await bot_api.send_message(chat_id, about_text, reply_markup=get_about_buttons())
 
-                    elif text == "/bypass" or text.startswith("/bypass@"):
-                        bypass_help = (
-                            f"⚠️ <b>{to_small_caps('please provide a link')}</b>:\n"
-                            f"<code>/bypass https://example.com/shortlink</code>\n\n"
-                            f"<i>Or simply paste any supported shortener link directly into the chat!</i>"
-                        )
-                        await bot_api.send_message(chat_id, bypass_help)
+                    elif text.startswith("/bypass"):
+                        url_to_bypass = extract_input_url(text)
+                        if url_to_bypass:
+                            asyncio.create_task(process_user_link(chat_id, user_id, url_to_bypass, reply_msg_id=msg.get("message_id")))
+                        else:
+                            bypass_help = (
+                                f"⚠️ <b>{to_small_caps('please provide a link')}</b>:\n"
+                                f"<code>/bypass https://example.com/shortlink</code>\n\n"
+                                f"<i>Or simply paste any supported shortener link directly into the chat!</i>"
+                            )
+                            await bot_api.send_message(chat_id, bypass_help)
 
                     else:
-                        urls = extract_valid_urls_from_text(text)
-                        if urls:
-                            asyncio.create_task(process_user_link(chat_id, user_id, urls[0], reply_msg_id=msg.get("message_id")))
+                        target = extract_input_url(text)
+                        if target:
+                            asyncio.create_task(process_user_link(chat_id, user_id, target, reply_msg_id=msg.get("message_id")))
 
                 # 2. Handle Callback Queries
                 elif "callback_query" in u:
