@@ -34,7 +34,7 @@ from flask import Flask, request, jsonify, send_file
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
-from telethon.tl.types import MessageEntityUrl
+from telethon.tl.types import MessageEntityUrl, MessageEntityTextUrl
 
 # ══════════════════════════════════════════════════════════════
 #  ENV LOADER (.env support)
@@ -407,18 +407,25 @@ def parse_dzhq_message(text: str, entities: list, sent_link: str) -> List[Dict[s
 
 def _parse_dzhq_block(block: str, ent_urls: list, sent_link: str) -> Optional[Dict[str, Any]]:
     original = None
-    bypassed = []
 
     m_in = _RX_IN.search(block)
     if m_in:
         original = clean_url(m_in.group(1))
 
+    # Priority 1: Exact "Got Result :-" link is the ONLY authentic destination
     m_got = _RX_GOT.search(block)
     if m_got:
         u = clean_url(m_got.group(1))
-        if is_valid_bypassed_destination(u, sent_link) and u not in bypassed:
-            bypassed.append(u)
+        if is_valid_bypassed_destination(u, sent_link):
+            return {
+                "status": "ok",
+                "original": original or sent_link,
+                "bypassed": u,
+                "all_bypassed": [u]
+            }
 
+    # Priority 2: Fallback only if no Got Result pattern matched
+    bypassed = []
     for _, url in ent_urls:
         if is_valid_bypassed_destination(url, sent_link) and url not in bypassed:
             bypassed.append(url)
@@ -936,7 +943,13 @@ class TelegramBotAPI:
             payload["reply_markup"] = reply_markup.to_dict()
         if reply_to_message_id:
             payload["reply_to_message_id"] = reply_to_message_id
-        return await self.call("sendMessage", payload)
+        res = await self.call("sendMessage", payload)
+        if not res.get("ok") and "reply_markup" in payload:
+            # Fallback if server does not accept style field
+            fallback_payload = dict(payload)
+            fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
+            res = await self.call("sendMessage", fallback_payload)
+        return res
 
     async def edit_message_text(
         self,
@@ -954,7 +967,27 @@ class TelegramBotAPI:
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup.to_dict()
-        return await self.call("editMessageText", payload)
+        res = await self.call("editMessageText", payload)
+        if not res.get("ok") and "reply_markup" in payload:
+            fallback_payload = dict(payload)
+            fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
+            res = await self.call("editMessageText", fallback_payload)
+        return res
+
+    @staticmethod
+    def _strip_styles(markup_dict: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(markup_dict, dict) or "inline_keyboard" not in markup_dict:
+            return markup_dict
+        new_keyboard = []
+        for row in markup_dict.get("inline_keyboard", []):
+            new_row = []
+            for btn in row:
+                if isinstance(btn, dict):
+                    new_row.append({k: v for k, v in btn.items() if k != "style"})
+                else:
+                    new_row.append(btn)
+            new_keyboard.append(new_row)
+        return {"inline_keyboard": new_keyboard}
 
     async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"callback_query_id": callback_query_id}
@@ -1026,20 +1059,32 @@ def get_start_buttons() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(buttons)
 
+# Retry cache for safe 64-byte Telegram callback_data
+_RETRY_CACHE: Dict[str, str] = {}
+
+def get_retry_callback_data(job_url: str) -> str:
+    token = secrets.token_hex(6)
+    _RETRY_CACHE[token] = job_url
+    if len(_RETRY_CACHE) > 500:
+        for k in list(_RETRY_CACHE.keys())[:100]:
+            _RETRY_CACHE.pop(k, None)
+    return f"retry:{token}"
+
 def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
     """
     Final Result buttons with REAL native Bot API 9.4 colored styles:
     - SUCCESS: 🟢 Open Link (Green)
     - PRIMARY: 🔵 Copy Link via Mini App (Blue)
-    - PRIMARY: 🟣 ProviderBotz Channel (Blue)
+    - PRIMARY: 🟣 ProviderBotz Channel (Purple/Blue Accent)
     - DANGER:  🔴 Retry (Red) | 🔴 Close (Red)
     """
     public_url = get_auto_public_url()
+    retry_cb = get_retry_callback_data(job_url)
     buttons = [
         # SUCCESS BUTTON: 🟢 Open Link
         [
             InlineKeyboardButton(
-                text="🔗 σᴩєɴ ʟιɴᴋ",
+                text="🟢 🔗 ᴏᴩєɴ ʟιɴᴋ",
                 url=final_url,
                 style=ButtonStyle.SUCCESS
             )
@@ -1051,16 +1096,16 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
         mini_app_copy_url = f"{public_url}/?copy={urllib.parse.quote(final_url)}"
         buttons.append([
             InlineKeyboardButton(
-                text="📋 ᴄσᴩʏ ʟιɴᴋ (ᴍιɴι ᴧᴩᴩ)",
+                text="🔵 📋 ᴄσᴩʏ ʟιɴᴋ",
                 web_app={"url": mini_app_copy_url},
                 style=ButtonStyle.PRIMARY
             )
         ])
 
-    # VIBRANT CHANNEL BUTTON
+    # VIBRANT PROVIDERBOTZ TELEGRAM CHANNEL BUTTON
     buttons.append([
         InlineKeyboardButton(
-            text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+            text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
             url=OFFICIAL_CHANNEL,
             style=ButtonStyle.PRIMARY
         )
@@ -1069,12 +1114,12 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
     # DANGER BUTTONS: 🔴 Retry | 🔴 Close
     buttons.append([
         InlineKeyboardButton(
-            text="🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
-            callback_data=f"retry:{job_url[:50]}",
+            text="🔴 🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
+            callback_data=retry_cb,
             style=ButtonStyle.DANGER
         ),
         InlineKeyboardButton(
-            text="❌ ᴄʟσѕє",
+            text="🔴 ❌ ᴄʟσѕє",
             callback_data="cmd_close",
             style=ButtonStyle.DANGER
         )
@@ -1084,24 +1129,25 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
 
 def get_failed_buttons(job_url: str) -> InlineKeyboardMarkup:
     """Failure buttons with colored styles."""
+    retry_cb = get_retry_callback_data(job_url)
     buttons = [
         [
             InlineKeyboardButton(
-                text="🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
-                callback_data=f"retry:{job_url[:50]}",
+                text="🔴 🔄 ʀєтʀʏ ʙʏᴩᴧѕѕ",
+                callback_data=retry_cb,
                 style=ButtonStyle.DANGER
             )
         ],
         [
             InlineKeyboardButton(
-                text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+                text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
                 url=OFFICIAL_CHANNEL,
                 style=ButtonStyle.PRIMARY
             )
         ],
         [
             InlineKeyboardButton(
-                text="🏠 ʜσᴍє",
+                text="🔵 🏠 ʜσᴍє",
                 callback_data="cmd_home",
                 style=ButtonStyle.PRIMARY
             )
@@ -1114,19 +1160,19 @@ def get_help_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+                text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
                 url=OFFICIAL_CHANNEL,
                 style=ButtonStyle.PRIMARY
             )
         ],
         [
             InlineKeyboardButton(
-                text="🏠 ʜσᴍє",
+                text="🔵 🏠 ʜσᴍє",
                 callback_data="cmd_home",
                 style=ButtonStyle.PRIMARY
             ),
             InlineKeyboardButton(
-                text="✅ ᴧʙσυт",
+                text="🟢 ✅ ᴧʙσυт",
                 callback_data="cmd_about",
                 style=ButtonStyle.SUCCESS
             )
@@ -1138,33 +1184,56 @@ def get_about_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                text="📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
+                text="🟣 📢 ᴩʀσᴠιᴅєʀʙσтᴢ ᴄʜᴧɴɴєʟ",
                 url=OFFICIAL_CHANNEL,
                 style=ButtonStyle.PRIMARY
             )
         ],
         [
             InlineKeyboardButton(
-                text="🏠 ʜσᴍє",
+                text="🔵 🏠 ʜσᴍє",
                 callback_data="cmd_home",
                 style=ButtonStyle.PRIMARY
             ),
             InlineKeyboardButton(
-                text="❌ ʜєʟᴩ",
+                text="🔴 ❌ ʜєʟᴩ",
                 callback_data="cmd_help",
                 style=ButtonStyle.DANGER
             )
         ]
     ])
 
-def extract_input_url(text: str) -> Optional[str]:
-    """Extract any target URL from a user message (handles https, http, or domain.com/path)."""
+def extract_input_url(data: Union[Dict[str, Any], str]) -> Optional[str]:
+    """Extract any target URL from a Telegram message dict or string (handles plain text, caption, and entities)."""
+    if isinstance(data, dict):
+        text = (data.get("text") or data.get("caption") or "").strip()
+        entities = data.get("entities") or data.get("caption_entities") or []
+        for ent in entities:
+            if ent.get("type") == "text_link" and ent.get("url"):
+                u = clean_url(ent["url"])
+                if is_valid_bypassed_destination(u, ""):
+                    return u
+            elif ent.get("type") == "url":
+                offset = ent.get("offset", 0)
+                length = ent.get("length", 0)
+                if text and offset is not None and length:
+                    u = clean_url(text[offset:offset + length])
+                    if u and not u.startswith(('/start', '/help', '/about')):
+                        return u
+    else:
+        text = str(data or "").strip()
+
     if not text:
         return None
+
+    if text.startswith("/bypass"):
+        text = text[len("/bypass"):].strip()
+
     # 1. Match full http/https URLs
     m = re.search(r'https?://[^\s\n\)\]>"\']+', text)
     if m:
         return clean_url(m.group(0))
+
     # 2. Match bare domain/path (e.g. droplink.co/abc, gplinks.co/xyz)
     m_bare = re.search(r'(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s]*)?', text)
     if m_bare:
@@ -1179,7 +1248,7 @@ def extract_input_url(text: str) -> Optional[str]:
 async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_msg_id: Optional[int] = None):
     """
     Automatically bypasses links with dynamic animated progress frames
-    and displays the final clean result formatted like @alexbypassbot (no source).
+    and displays the final clean result formatted like @alexbypassbot (no raw JSON, no internal source leaked).
     """
     allowed, rate_msg = engine.check_user_rate_limit(user_id)
     if not allowed:
@@ -1190,12 +1259,8 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
 
     # Initial Animation Frame (10%)
     initial_frame = (
-        f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
-        f"┃\n"
-        f"┃ [▰▱▱▱▱▱▱▱▱▱] 10%\n"
-        f"┃ 🔍 <i>{to_small_caps('fetching link data...')}</i>\n"
-        f"┃\n"
-        f"╰━━━━━━━━━━━━━━━━━━━━╯"
+        f"🔄 <b>{to_small_caps('bypassing link...')}</b> [▰▱▱▱▱▱▱▱▱▱] 10%\n"
+        f"🔍 <i>{to_small_caps('fetching link data...')}</i>"
     )
     initial_msg = await bot_api.send_message(
         chat_id,
@@ -1207,44 +1272,28 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
     stop_updater = asyncio.Event()
 
     async def _status_ticker():
-        # Dynamic animation frames like @alexbypassbot
+        # Fast, responsive animation frames like AlexBypassBot
         frames = [
             (
-                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
-                f"┃\n"
-                f"┃ [▰▰▰▱▱▱▱▱▱▱] 35%\n"
-                f"┃ 🔓 <i>{to_small_caps('bypassing security & captcha...')}</i>\n"
-                f"┃\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+                f"🔄 <b>{to_small_caps('bypassing link...')}</b> [▰▰▰▱▱▱▱▱▱▱] 35%\n"
+                f"🔓 <i>{to_small_caps('bypassing security & captcha...')}</i>"
             ),
             (
-                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
-                f"┃\n"
-                f"┃ [▰▰▰▰▰▱▱▱▱▱] 60%\n"
-                f"┃ ⚙️ <i>{to_small_caps('decoding shortlink tokens...')}</i>\n"
-                f"┃\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+                f"🔄 <b>{to_small_caps('bypassing link...')}</b> [▰▰▰▰▰▱▱▱▱▱] 60%\n"
+                f"⚙️ <i>{to_small_caps('decoding shortlink tokens...')}</i>"
             ),
             (
-                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
-                f"┃\n"
-                f"┃ [▰▰▰▰▰▰▰▰▱▱] 82%\n"
-                f"┃ 📡 <i>{to_small_caps('solving destination redirect...')}</i>\n"
-                f"┃\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+                f"🔄 <b>{to_small_caps('bypassing link...')}</b> [▰▰▰▰▰▰▰▱▱▱] 80%\n"
+                f"📡 <i>{to_small_caps('solving destination redirect...')}</i>"
             ),
             (
-                f"╭━━━━〔 ⚡ <b>{to_small_caps('bypassing...')}</b> 〕━━━━╮\n"
-                f"┃\n"
-                f"┃ [▰▰▰▰▰▰▰▰▰▱] 95%\n"
-                f"┃ ✨ <i>{to_small_caps('verifying final destination...')}</i>\n"
-                f"┃\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━╯"
+                f"🔄 <b>{to_small_caps('bypassing link...')}</b> [▰▰▰▰▰▰▰▰▰▱] 95%\n"
+                f"✨ <i>{to_small_caps('verifying clean destination...')}</i>"
             )
         ]
         idx = 0
         while not stop_updater.is_set():
-            await asyncio.sleep(1.8)
+            await asyncio.sleep(1.2)
             if stop_updater.is_set():
                 break
             if status_msg_id:
@@ -1263,26 +1312,21 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
         ticker_task.cancel()
         engine.cleanup_job(job_id)
 
-    # Output formatted PROPERLY like @alexbypassbot (No source or internal provider name)
+    # Output formatted PROPERLY like AlexBypassBot message:
+    # No raw JSON! No internal source name shown! Single tap monospace copy!
     if result.get("status") is True and result.get("url"):
         final_url = result["url"]
         duration_ms = int(result.get("response_ms", "1000ms").replace("ms", ""))
         duration_formatted = f"{duration_ms / 1000:.1f}s" if duration_ms >= 1000 else f"{duration_ms}ms"
 
         res_text = (
-            f"╭━━━━〔 ⚡ <b>{to_small_caps('bypass complete')}</b> ⚡ 〕━━━━╮\n"
-            f"┃\n"
-            f"┃ 🔗 <b>{to_small_caps('bypassed link')}:</b>\n"
-            f"┃ <code>{html.escape(final_url)}</code>\n"
-            f"┃\n"
-            f"┃ 🌐 <b>{to_small_caps('original link')}:</b>\n"
-            f"┃ <code>{html.escape(target_url)}</code>\n"
-            f"┃\n"
-            f"┃ ⏱ <b>{to_small_caps('time taken')}:</b> <code>{duration_formatted}</code>\n"
-            f"┃ ⚡ <b>{to_small_caps('powered by')}:</b> @ProviderBotz\n"
-            f"┃\n"
-            f"╰━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\n"
-            f"📋 <i>(Tap on the bypassed link above to copy)</i>"
+            f"⚡ <b>Link Bypassed Successfully!</b>\n\n"
+            f"🔗 <b>Original Link:</b>\n"
+            f"<code>{html.escape(target_url)}</code>\n\n"
+            f"🎯 <b>Bypassed Link:</b>\n"
+            f"<code>{html.escape(final_url)}</code>\n\n"
+            f"⏱ <b>Time Taken:</b> <code>{duration_formatted}</code>\n\n"
+            f"👆 <i>Tap the bypassed link above to copy immediately!</i>"
         )
         reply_markup = get_result_buttons(final_url, target_url)
         if status_msg_id:
@@ -1294,17 +1338,12 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
             await bot_api.send_message(chat_id, res_text, reply_markup=reply_markup)
     else:
         err_text = (
-            f"╭━━━━〔 ❌ <b>{to_small_caps('bypass failed')}</b> 〕━━━━╮\n"
-            f"┃\n"
-            f"┃ ⚠️ <b>{to_small_caps('the link could not be bypassed.')}</b>\n"
-            f"┃\n"
-            f"┃ 🌐 <b>{to_small_caps('original link')}:</b>\n"
-            f"┃ <code>{html.escape(target_url)}</code>\n"
-            f"┃\n"
-            f"┃ • <i>Please check if the link is active.</i>\n"
-            f"┃ • <i>Tap retry to try again.</i>\n"
-            f"┃\n"
-            f"╰━━━━━━━━━━━━━━━━━━━━╯"
+            f"❌ <b>Bypass Failed!</b>\n\n"
+            f"⚠️ <i>The link could not be bypassed or expired.</i>\n\n"
+            f"🔗 <b>Original Link:</b>\n"
+            f"<code>{html.escape(target_url)}</code>\n\n"
+            f"• <i>Please check if the link is active and valid.</i>\n"
+            f"• <i>Tap Retry below to try bypassing again.</i>"
         )
         reply_markup = get_failed_buttons(target_url)
         if status_msg_id:
@@ -1350,7 +1389,7 @@ async def run_bot_polling():
                     chat_id = msg.get("chat", {}).get("id")
                     user = msg.get("from", {})
                     user_id = user.get("id")
-                    text = msg.get("text", "").strip()
+                    text = (msg.get("text") or msg.get("caption") or "").strip()
                     first_name = html.escape(user.get("first_name", "Friend") or "Friend")
 
                     if not text or not chat_id:
@@ -1359,7 +1398,7 @@ async def run_bot_polling():
                     if text == "/start":
                         start_text = (
                             f"Welcome {first_name} 🌹\n\n"
-                            f"This is the fastest and powerfull auto link bypass bot ∆\n\n"
+                            f"This is the fastest and powerful auto link bypass bot ∆\n\n"
                             f"⚡ <b>ᴩʀσᴠιᴅєʀʙσтᴢ ᴇɴɢιɴє</b>\n"
                             f"Send any supported shortener link below to bypass instantly.\n\n"
                             f"📢 <b>Official Updates:</b> @ProviderBotz"
@@ -1392,7 +1431,7 @@ async def run_bot_polling():
                         await bot_api.send_message(chat_id, about_text, reply_markup=get_about_buttons())
 
                     elif text.startswith("/bypass"):
-                        url_to_bypass = extract_input_url(text)
+                        url_to_bypass = extract_input_url(msg)
                         if url_to_bypass:
                             asyncio.create_task(process_user_link(chat_id, user_id, url_to_bypass, reply_msg_id=msg.get("message_id")))
                         else:
@@ -1404,7 +1443,7 @@ async def run_bot_polling():
                             await bot_api.send_message(chat_id, bypass_help)
 
                     else:
-                        target = extract_input_url(text)
+                        target = extract_input_url(msg)
                         if target:
                             asyncio.create_task(process_user_link(chat_id, user_id, target, reply_msg_id=msg.get("message_id")))
 
@@ -1457,8 +1496,10 @@ async def run_bot_polling():
                         await bot_api.delete_message(chat_id, msg_id)
 
                     elif cq_data.startswith("retry:"):
-                        url_to_retry = cq_data.split("retry:", 1)[1]
-                        asyncio.create_task(process_user_link(chat_id, user.get("id"), url_to_retry, reply_msg_id=msg_id))
+                        token = cq_data.split("retry:", 1)[1]
+                        url_to_retry = _RETRY_CACHE.get(token, token)
+                        if url_to_retry:
+                            asyncio.create_task(process_user_link(chat_id, user.get("id"), url_to_retry, reply_msg_id=msg_id))
 
         except asyncio.CancelledError:
             break
@@ -1477,10 +1518,15 @@ GLOBAL_ASYNC_LOOP: Optional[asyncio.AbstractEventLoop] = None
 @app.before_request
 def auto_detect_host_url():
     global _CURRENT_PUBLIC_URL
-    if request.host_url and not _CURRENT_PUBLIC_URL:
-        detected = request.host_url.rstrip("/")
-        if not detected.startswith("http://localhost"):
-            _CURRENT_PUBLIC_URL = detected
+    if not _CURRENT_PUBLIC_URL or _CURRENT_PUBLIC_URL.startswith("http://localhost"):
+        proto = request.headers.get("X-Forwarded-Proto") or ("https" if request.is_secure else "http")
+        host = request.headers.get("X-Forwarded-Host") or request.host
+        if host and not host.startswith("localhost") and not host.startswith("127.0.0.1"):
+            _CURRENT_PUBLIC_URL = f"{proto}://{host}".rstrip("/")
+        elif request.host_url:
+            detected = request.host_url.rstrip("/")
+            if not detected.startswith("http://localhost"):
+                _CURRENT_PUBLIC_URL = detected
 
 @app.route("/", methods=["GET"])
 def route_index():
