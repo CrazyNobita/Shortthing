@@ -1034,7 +1034,12 @@
       }, 2500);
 
       try {
-        const response = await fetch(`/bypass?url=${encodeURIComponent(rawUrl)}`);
+        let fetchEndpoint = `/bypass?url=${encodeURIComponent(rawUrl)}`;
+        const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        if (tgUser && tgUser.id) {
+          fetchEndpoint += `&uid=${encodeURIComponent(tgUser.id)}&fname=${encodeURIComponent(tgUser.first_name || 'User')}`;
+        }
+        const response = await fetch(fetchEndpoint);
         clearInterval(stageTimer);
         const data = await response.json();
 
