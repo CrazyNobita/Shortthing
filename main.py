@@ -82,7 +82,7 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 # কোড থেকেই সরাসরি আপনার টেলিগ্রাম মিনি অ্যাপ লিংক বা ওয়েব ডোমেইন পেস্ট করতে পারেন:
 # উদাহরণ: "https://t.me/YourBot/app" অথবা "https://your-domain.run.app"
 # যদি ফাঁকা ("") থাকে, তবে এটি অটো-ডিটেক্ট বা হোস্টিং এনভায়রনমেন্ট ভ্যারিয়েবল (PUBLIC_URL) ব্যবহার করবে।
-MANUAL_MINI_APP_URL: str = ""  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
+MANUAL_MINI_APP_URL: str = "https://codenestauth4.onrender.com/live/u13-linkzobot-e35f97/"  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
 
 # 👥 2. DZHQ GROUP (ডিজেডএইচকিউ গ্রুপ আইডি / ইউজারনেম):
 # DZHQ Bot (@DZHQ_BypassBot) মডারদের নিয়মানুযায়ী শুধুমাত্র অনুমোদিত গ্রুপে কাজ করে (DM-এ কাজ করে না)।
@@ -99,17 +99,17 @@ OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
 # Public Bot Credentials
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-BOT_USERNAME = os.environ.get("BOT_USERNAME", "").strip().lstrip("@")
-OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip()
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgbpb6q40Yvjw-SeZVyZicW2BXk-1kS0E").strip()
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
+OWNER_ID_RAW = os.environ.get("OWNER_ID", "7931847651").strip()
 OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW.isdigit() else None
 bot_api: Optional[Any] = None
 
 # Telethon Userbot Credentials
-TELEGRAM_API_ID_RAW = os.environ.get("TELEGRAM_API_ID", "").strip()
+TELEGRAM_API_ID_RAW = os.environ.get("TELEGRAM_API_ID", "36805393").strip()
 TELEGRAM_API_ID = int(TELEGRAM_API_ID_RAW) if TELEGRAM_API_ID_RAW.isdigit() else 0
-TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "").strip()
-TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "").strip()
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
+TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBuxr60UxlUBk2Zum8nPSQPKmbKz7twICbgRo7t-Tq39y3HX_qdKGe_SawQjfw-n54MX5WRrosnxd1hONY4y0xxY-4nad14WibbTDA57EIjNTLxnAyD10mbhdq79RYK6RndsVa_GwQ8WVktjHo_PrFXEPmZdz1xj6enGCQtv9qb7niVhKRhqEE-Ehtwz2vBkd4snLYaJOi9TXDOpYYK8YSgU9q16ySIDd-xEdjz4Ukx4_yIof6vyALxTDB9zYXvobSOQ3biPr1O7n1P-4-qp4cNT5QjqDHnX5zSpoolMSqMJjrskErbueP2NHVZney963xb49Fr_k4VthPNqSfuJPDILk=").strip()
 
 # External Bypass Bots (Supports DZHQ Group & Alex DM)
 DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
