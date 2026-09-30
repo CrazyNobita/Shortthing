@@ -84,7 +84,7 @@ OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
 # Public Bot Credentials
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgPfZQBwx5P1bodAcQCdYtR6WMn6yucbY").strip()
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgbpb6q40Yvjw-SeZVyZicW2BXk-1kS0E").strip()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
 OWNER_ID_RAW = os.environ.get("OWNER_ID", "7931847651").strip()
 OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW.isdigit() else None
