@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ShortnerBypass — Production-Ready Telegram Auto Link Bypass Bot
@@ -32,7 +33,7 @@ import urllib.parse
 from enum import Enum
 from datetime import datetime, timezone
 from collections import defaultdict
-from typing import Optional, Dict, Any, List, Tuple, Union
+from typing import Optional, Dict, Any, List, Tuple, Union, Set, Callable, Sequence
 
 import aiohttp
 from flask import Flask, request, jsonify, send_file
@@ -62,6 +63,17 @@ def load_env(path: str = ".env"):
         pass
 
 load_env()
+
+# ══════════════════════════════════════════════════════════════
+#  GLOBAL LOGGING SETUP (Available to all modules immediately)
+# ══════════════════════════════════════════════════════════════
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("ProviderBotz")
+logging.getLogger("telethon").setLevel(logging.WARNING)
 
 # ══════════════════════════════════════════════════════════════
 #  CONFIGURATION & DYNAMIC AUTO-URL GENERATION
@@ -253,15 +265,6 @@ MAX_BYPASS_TIMEOUT_SEC = float(os.environ.get("MAX_BYPASS_TIMEOUT_SEC", "120"))
 RATE_LIMIT_SECONDS = float(os.environ.get("RATE_LIMIT_SECONDS", "3"))
 MAX_CONCURRENT_PER_USER = int(os.environ.get("MAX_CONCURRENT_PER_USER", "2"))
 TRACE_BOTS = os.environ.get("TRACE_BOTS", "false").lower() in ("true", "1", "yes")
-
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
-)
-logger = logging.getLogger("ProviderBotz")
-logging.getLogger("telethon").setLevel(logging.WARNING)
 
 # ══════════════════════════════════════════════════════════════
 #  PYROGRAM & BOT API 9.4+ REAL COLORED BUTTON STYLE SYSTEM
@@ -1308,7 +1311,7 @@ def schedule_auto_delete(chat_id: int, message_id: int, delay_seconds: int = 150
 #  USER DATABASE & PERSISTENCE (FOR OWNER BROADCASTING)
 # ══════════════════════════════════════════════════════════════
 USER_DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
-_USERS_SET: Set[int] = set()
+_USERS_SET: set[int] = set()
 _USERS_LOCK = threading.Lock()
 
 def load_registered_users():
