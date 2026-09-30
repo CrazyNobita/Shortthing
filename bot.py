@@ -72,16 +72,16 @@ OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
 # Public Bot Credentials
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-BOT_USERNAME = os.environ.get("BOT_USERNAME", "").strip().lstrip("@")
-OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip()
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgPfZQBwx5P1bodAcQCdYtR6WMn6yucbY").strip()
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
+OWNER_ID_RAW = os.environ.get("OWNER_ID", "7931847651").strip()
 OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW.isdigit() else None
 
 # Telethon Userbot Credentials
-TELEGRAM_API_ID_RAW = os.environ.get("TELEGRAM_API_ID", "").strip()
+TELEGRAM_API_ID_RAW = os.environ.get("TELEGRAM_API_ID", "36805393").strip()
 TELEGRAM_API_ID = int(TELEGRAM_API_ID_RAW) if TELEGRAM_API_ID_RAW.isdigit() else 0
-TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "").strip()
-TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "").strip()
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
+TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBu8XGF6y9Vp-7TSbgzqjs3xLUbM08joW34XJWMUsyv5BLt0hR5eqiZ5VDZ4qVwwBT2q6tbsiWp36BskZFR9pS82-ZM-dSJS4MrGNqgKUoWVdtLApLR7q_dgP3lLbB3Dz5bCFgjTq_5Kozqp5qetXSPcnB0s1T0il-6DCFW3tsYHPNcG7aeySrRCdT7Km6aeDFoMf56_g3BXR9EIkCvWY8lL7d59M7M66GaW7y3xLm_ZD1PZBrNLb3So45v3Va6VtndaryhtR4KqPq_dUV6xqbitSC7Hd2PED-Di4izNutICVSeFrNsFhjhikZk0S5cDvUJkrVfVQ1B5ub840Eck0vHrU=").strip()
 
 # External Bypass Bots (Only DZHQ Group & Alex DM allowed)
 DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
