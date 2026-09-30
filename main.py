@@ -76,7 +76,22 @@ logger = logging.getLogger("ProviderBotz")
 logging.getLogger("telethon").setLevel(logging.WARNING)
 
 # ══════════════════════════════════════════════════════════════
-#  CONFIGURATION & DYNAMIC AUTO-URL GENERATION
+#  MANUAL CONFIGURATION / ম্যানুয়াল কনফিগারেশন (সরাসরি কোডে পেস্ট করুন)
+# ══════════════════════════════════════════════════════════════
+# 🚀 1. MINI APP URL (মিনি অ্যাপ লিংক):
+# কোড থেকেই সরাসরি আপনার টেলিগ্রাম মিনি অ্যাপ লিংক বা ওয়েব ডোমেইন পেস্ট করতে পারেন:
+# উদাহরণ: "https://t.me/YourBot/app" অথবা "https://your-domain.run.app"
+# যদি ফাঁকা ("") থাকে, তবে এটি অটো-ডিটেক্ট বা হোস্টিং এনভায়রনমেন্ট ভ্যারিয়েবল (PUBLIC_URL) ব্যবহার করবে।
+MANUAL_MINI_APP_URL: str = ""  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
+
+# 👥 2. DZHQ GROUP (ডিজেডএইচকিউ গ্রুপ আইডি / ইউজারনেম):
+# DZHQ Bot (@DZHQ_BypassBot) মডারদের নিয়মানুযায়ী শুধুমাত্র অনুমোদিত গ্রুপে কাজ করে (DM-এ কাজ করে না)।
+# আপনার অনুমোদিত DZHQ গ্রুপের আইডি (যেমন: -1001234567890) বা ইউজারনেম (যেমন: "my_dzhq_group") পেস্ট করুন:
+# যদি ফাঁকা থাকে, তবে DZHQ গ্রুপ ছাড়া চলবে না এবং প্রাইভেট DM-এর জন্য Alex DM স্বয়ংক্রিয়ভাবে ব্যবহৃত হবে।
+MANUAL_DZHQ_GROUP: Union[int, str, None] = None  # 👈 PASTE DZHQ GROUP ID (-100xxxx) OR USERNAME HERE!
+
+# ══════════════════════════════════════════════════════════════
+#  SYSTEM CONFIGURATION & CREDENTIALS
 # ══════════════════════════════════════════════════════════════
 DEVELOPER = "@LazyProvider"
 BRAND_NAME = "ProviderBotz"
@@ -84,20 +99,31 @@ OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
 # Public Bot Credentials
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgbpb6q40Yvjw-SeZVyZicW2BXk-1kS0E").strip()
-BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
-OWNER_ID_RAW = os.environ.get("OWNER_ID", "7931847651").strip()
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "").strip().lstrip("@")
+OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip()
 OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW.isdigit() else None
+bot_api: Optional[Any] = None
 
 # Telethon Userbot Credentials
-TELEGRAM_API_ID_RAW = os.environ.get("TELEGRAM_API_ID", "36805393").strip()
+TELEGRAM_API_ID_RAW = os.environ.get("TELEGRAM_API_ID", "").strip()
 TELEGRAM_API_ID = int(TELEGRAM_API_ID_RAW) if TELEGRAM_API_ID_RAW.isdigit() else 0
-TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
-TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBu8XGF6y9Vp-7TSbgzqjs3xLUbM08joW34XJWMUsyv5BLt0hR5eqiZ5VDZ4qVwwBT2q6tbsiWp36BskZFR9pS82-ZM-dSJS4MrGNqgKUoWVdtLApLR7q_dgP3lLbB3Dz5bCFgjTq_5Kozqp5qetXSPcnB0s1T0il-6DCFW3tsYHPNcG7aeySrRCdT7Km6aeDFoMf56_g3BXR9EIkCvWY8lL7d59M7M66GaW7y3xLm_ZD1PZBrNLb3So45v3Va6VtndaryhtR4KqPq_dUV6xqbitSC7Hd2PED-Di4izNutICVSeFrNsFhjhikZk0S5cDvUJkrVfVQ1B5ub840Eck0vHrU=").strip()
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "").strip()
+TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "").strip()
 
-# External Bypass Bots (Only DZHQ Group & Alex DM allowed)
+# External Bypass Bots (Supports DZHQ Group & Alex DM)
 DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
-DZHQ_GROUP = -1003644908415  # Dedicated Telegram Group for DZHQ
+
+# DZHQ Group Priority: MANUAL_DZHQ_GROUP (Code) -> DZHQ_GROUP (Environment Variable)
+_raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "").strip()
+if _raw_dzhq_grp:
+    try:
+        DZHQ_GROUP: Optional[Union[int, str]] = int(str(_raw_dzhq_grp).strip())
+    except ValueError:
+        DZHQ_GROUP = str(_raw_dzhq_grp).strip()
+else:
+    DZHQ_GROUP = None
+
 ALEX_BOT = os.environ.get("ALEX_BOT_USERNAME", "@alexbypassbot").strip()
 
 # Web Server & Port Configuration
@@ -212,20 +238,24 @@ def start_auto_tunnel(port: int) -> Optional[str]:
         return None
 
 def get_auto_public_url() -> str:
-    """Return the dynamically resolved public URL for the Mini App and webhooks."""
+    """Return the dynamically resolved or manually pasted public URL for the Mini App and webhooks."""
     global _CURRENT_PUBLIC_URL
+
+    # 1. Manual paste in code (Highest priority)
+    if MANUAL_MINI_APP_URL and MANUAL_MINI_APP_URL.strip():
+        url = MANUAL_MINI_APP_URL.strip().rstrip("/")
+        _CURRENT_PUBLIC_URL = url
+        return url
+
     if _CURRENT_PUBLIC_URL and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
         return _CURRENT_PUBLIC_URL
 
-    env_public = os.environ.get("PUBLIC_URL", "").strip().rstrip("/")
-    if env_public and not env_public.startswith("http://localhost"):
-        _CURRENT_PUBLIC_URL = env_public
-        return _CURRENT_PUBLIC_URL
-
-    app_url = os.environ.get("APP_URL", "").strip().rstrip("/")
-    if app_url and not app_url.startswith("http://localhost"):
-        _CURRENT_PUBLIC_URL = app_url
-        return _CURRENT_PUBLIC_URL
+    # 2. Environment variables for Mini App / Web App
+    for env_key in ("MINI_APP_URL", "WEBAPP_URL", "PUBLIC_URL", "APP_URL"):
+        env_val = os.environ.get(env_key, "").strip().rstrip("/")
+        if env_val and not env_val.startswith("http://localhost"):
+            _CURRENT_PUBLIC_URL = env_val
+            return _CURRENT_PUBLIC_URL
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     if render_url:
@@ -757,52 +787,80 @@ class BypassEngine:
 engine = BypassEngine()
 
 # ══════════════════════════════════════════════════════════════
-#  USERBOT TELEGRAM HANDLERS (DZHQ GROUP ONLY + ALEX DM ONLY)
+#  USERBOT TELEGRAM HANDLERS (DZHQ GROUP/DM + ALEX DM)
 # ══════════════════════════════════════════════════════════════
 def setup_userbot_handlers(client: TelegramClient):
     """
-    DZHQ operates strictly in DZHQ_GROUP (-1003644908415).
-    Alex operates strictly in private DM.
+    DZHQ operates in DZHQ_GROUP (if configured) or via direct DM with DZHQ_BOT.
+    Alex operates in private DM.
     """
 
-    # 1. DZHQ Handler — STRICTLY IN TELEGRAM GROUP
+    # 1. DZHQ Handler — Operates in authorized Telegram group (as restricted by DZHQ modders)
     async def on_dzhq_message(event):
-        if event.chat_id != DZHQ_GROUP and (engine.dzhq_group_entity and event.chat_id != engine.dzhq_group_entity.id):
-            return
-
         msg = event.message
-        text = msg.text or ""
+        text = msg.text or msg.caption or ""
         if not text:
             return
 
         sender_id = event.sender_id
-        if engine.dzhq_bot_id and sender_id != engine.dzhq_bot_id:
+        is_dzhq_sender = bool(engine.dzhq_bot_id and sender_id == engine.dzhq_bot_id)
+        
+        is_group_msg = bool(DZHQ_GROUP and (event.chat_id == DZHQ_GROUP or (engine.dzhq_group_entity and event.chat_id == engine.dzhq_group_entity.id)))
+        is_private_msg = bool(event.is_private and (is_dzhq_sender or (engine.dzhq_bot_id and event.chat_id == engine.dzhq_bot_id)))
+
+        if not is_group_msg and not is_private_msg:
             return
+
+        # If in group, verify message came from DZHQ bot or contains DZHQ signature
+        if is_group_msg and not is_dzhq_sender:
+            sender = await event.get_sender()
+            s_username = (getattr(sender, 'username', '') or '').lower()
+            if s_username == DZHQ_BOT.lstrip('@').lower() or getattr(sender, 'is_bot', False):
+                is_dzhq_sender = True
+                if not engine.dzhq_bot_id:
+                    engine.dzhq_bot_id = sender_id
+            elif not any(k in text for k in ('DZHQBypass', 'Got Result', 'In Link', 'Got Error', 'Bypassing...')):
+                return
 
         rt_obj = getattr(msg, 'reply_to', None)
         reply_to_id = getattr(rt_obj, 'reply_to_msg_id', None) if rt_obj else None
-        if not reply_to_id:
-            return
 
         target_job = None
         with engine.jobs_lock:
             for job in engine.active_jobs.values():
-                if job.get("dzhq_sent_id") == reply_to_id and job["state"] in (JobState.WAITING, JobState.PROCESSING):
-                    target_job = job
-                    break
+                if job.get("provider") == "dzhq" and job["state"] in (JobState.WAITING, JobState.PROCESSING):
+                    # 1. Exact match with the sent /b message
+                    if reply_to_id and job.get("dzhq_sent_id") == reply_to_id:
+                        target_job = job
+                        break
+                    # 2. Or reply to previous message in reply chain for this job
+                    elif reply_to_id and job.get("dzhq_last_msg_id") == reply_to_id:
+                        target_job = job
+                        break
+                    # 3. Or if original link is mentioned in the text
+                    elif job.get("url") and job["url"] in text:
+                        target_job = job
+                        break
+            # 4. If only one active DZHQ job in progress in the group
+            if not target_job and is_group_msg:
+                active_dzhq = [j for j in engine.active_jobs.values() if j.get("provider") == "dzhq" and j["state"] in (JobState.WAITING, JobState.PROCESSING)]
+                if len(active_dzhq) == 1:
+                    target_job = active_dzhq[0]
 
         if not target_job:
             return
 
+        target_job["dzhq_last_msg_id"] = msg.id
+
         parsed = parse_dzhq_message(text, msg.entities or [], target_job["url"])
         status = parsed[0].get("status") if parsed else "empty"
-        _trace("DZHQ_GROUP", f"Job {target_job['id']} update: status={status}")
+        _trace("DZHQ", f"Job {target_job['id']} update: status={status}")
 
         target_job["last_activity_ts"] = time.time()
 
         if status == "intermediate":
             target_job["state"] = JobState.PROCESSING
-            target_job["status_msg"] = "⏳ ᴘʀσᴄєѕѕιɴɢ... (DZHQ group bypass)"
+            target_job["status_msg"] = "⏳ ᴘʀσᴄєѕѕιɴɢ... (DZHQ bypass)"
             return
 
         # Auto-click Delete button on DZHQ result message
@@ -815,10 +873,10 @@ def setup_userbot_handlers(client: TelegramClient):
                             bt = (getattr(btn, 'text', '') or '').lower()
                             if any(k in bt for k in ('delete', '🗑', '❌')):
                                 await btn.click()
-                                _trace("DZHQ_GROUP", "Auto-clicked delete button on result")
+                                _trace("DZHQ", "Auto-clicked delete button on result")
                                 return
                 except Exception as e:
-                    _trace("DZHQ_GROUP", f"Delete button click error: {e}")
+                    _trace("DZHQ", f"Delete button click error: {e}")
             asyncio.create_task(_click_delete())
 
         if status == "ok" and parsed[0].get("bypassed"):
@@ -833,8 +891,8 @@ def setup_userbot_handlers(client: TelegramClient):
             target_job["state"] = JobState.FAILED
             target_job["event"].set()
 
-    client.add_event_handler(on_dzhq_message, events.NewMessage(chats=DZHQ_GROUP))
-    client.add_event_handler(on_dzhq_message, events.MessageEdited(chats=DZHQ_GROUP))
+    client.add_event_handler(on_dzhq_message, events.NewMessage())
+    client.add_event_handler(on_dzhq_message, events.MessageEdited())
 
     # 2. Alex DM Handler — STRICTLY IN PRIVATE DM
     async def on_alex_message(event):
@@ -913,14 +971,35 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
 
     if not engine.userbot or not engine.userbot_connected:
         job["state"] = JobState.FAILED
-        job["error"] = "Telethon Userbot is not connected"
-        return {"status": False, "message": job["error"]}
+        job["error"] = "Telethon Userbot is offline. Please configure TELEGRAM_SESSION, TELEGRAM_API_ID, and TELEGRAM_API_HASH in your hosting settings (.env)."
+        logger.warning(f"⚠️ Bypass job {job_id} aborted: Telethon Userbot is not connected.")
+        return {
+            "status": False,
+            "developer": DEVELOPER,
+            "message": job["error"],
+            "response_ms": "0ms"
+        }
 
+    # Provider Selection & Modder Policy:
+    # DZHQ Bot (@DZHQ_BypassBot) only operates in authorized groups (modder restriction, DM is disabled).
+    has_dzhq_group = bool(engine.dzhq_group_entity or DZHQ_GROUP)
     is_alex_favored = any(k in target_url.lower() for k in ("urlking", "monteolympus", "alex", "shortx"))
-    primary_provider = "alex_dm" if is_alex_favored else "dzhq"
-    fallback_provider = "dzhq" if is_alex_favored else "alex_dm"
 
-    providers_to_try = [primary_provider, fallback_provider]
+    if not has_dzhq_group:
+        # Without an authorized group, DZHQ cannot be used (modders allow only group execution).
+        # Fall back directly to Alex DM without wasting timeout on DZHQ.
+        _trace("ENGINE", "DZHQ group is not configured (DZHQ bot modders require authorized group). Using Alex DM.")
+        primary_provider = "alex_dm"
+        fallback_provider = None
+    elif is_alex_favored:
+        primary_provider = "alex_dm"
+        fallback_provider = "dzhq"
+    else:
+        primary_provider = "dzhq"
+        fallback_provider = "alex_dm"
+
+    providers_to_try = [p for p in (primary_provider, fallback_provider) if p]
+    last_error_detail = None
 
     for current_provider in providers_to_try:
         job["provider"] = current_provider
@@ -933,19 +1012,32 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
         try:
             if current_provider == "dzhq":
                 group_target = engine.dzhq_group_entity if engine.dzhq_group_entity else DZHQ_GROUP
-                sent = await engine.userbot.send_message(group_target, f"/b {target_url}")
-                job["dzhq_sent_id"] = sent.id
+                if not group_target:
+                    _trace("ENGINE", "Skipping DZHQ: group not configured. DZHQ bot modders require an authorized group.")
+                    last_error_detail = "DZHQ bot requires an authorized Telegram group (modder restriction). Set MANUAL_DZHQ_GROUP in bot.py."
+                    continue
+                try:
+                    sent = await engine.userbot.send_message(group_target, f"/b {target_url}")
+                    job["dzhq_sent_id"] = sent.id
+                    _trace("ENGINE", f"Sent /b {target_url} to DZHQ group (msg id {sent.id})")
+                except Exception as e:
+                    _trace("ENGINE", f"DZHQ group send failed: {e}")
+                    last_error_detail = f"Could not send to DZHQ group: {e}"
+                    continue
+
             elif current_provider == "alex_dm":
                 with engine.alex_queue_lock:
                     engine.alex_dm_queue.append(job_id)
                 sent = await engine.userbot.send_message(ALEX_BOT, target_url)
                 job["alex_sent_id"] = sent.id
+                _trace("ENGINE", f"Sent {target_url} to {ALEX_BOT} in DM (msg id {sent.id})")
 
             provider_timeout = ALEX_DM_TIMEOUT_SEC if current_provider == "alex_dm" else BYPASS_IDLE_TIMEOUT_SEC
             while time.time() - t0 < MAX_BYPASS_TIMEOUT_SEC:
                 now = time.time()
                 if now - job["last_activity_ts"] > provider_timeout:
                     _trace("ENGINE", f"Provider {current_provider} idle timeout ({provider_timeout}s)")
+                    last_error_detail = f"Provider {current_provider} timed out after {provider_timeout}s without response"
                     break
 
                 try:
@@ -991,9 +1083,13 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                         "bypassed": job["final_url"]
                     }
                 }
+            elif job["state"] == JobState.FAILED and job.get("error"):
+                last_error_detail = job.get("error")
 
         except Exception as e:
-            _trace("ENGINE", f"Provider {current_provider} error: {e}")
+            _trace("ENGINE", f"Provider {current_provider} send error: {e}")
+            logger.error(f"❌ Failed to send message to {current_provider}: {e}")
+            last_error_detail = f"Could not send message to {current_provider}: {e}"
 
         _trace("ENGINE", f"Primary {current_provider} did not resolve. Attempting fallback.")
 
@@ -1016,14 +1112,14 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
         f"• User: {user_mention}\n"
         f"• Original: {job['url']}\n"
         f"• Time: <code>{duration_ms}ms</code>\n"
-        f"• Reason: All providers (DZHQ group + Alex DM) timed out or rejected."
+        f"• Reason: {last_error_detail or 'All providers timed out or rejected.'}"
     )
     asyncio.create_task(engine.log_to_owner(fail_log))
 
     return {
         "status": False,
         "developer": DEVELOPER,
-        "message": "All bypass providers failed to resolve this link.",
+        "message": last_error_detail or "All bypass providers failed to resolve this link.",
         "response_ms": f"{duration_ms}ms"
     }
 
@@ -1360,7 +1456,8 @@ def get_start_buttons() -> InlineKeyboardMarkup:
     buttons = []
 
     # Mini App Button (always present with start message)
-    if public_url and public_url.startswith("https://"):
+    is_tme_link = bool(public_url and ("t.me/" in public_url or "telegram.me/" in public_url))
+    if public_url and public_url.startswith("https://") and not is_tme_link:
         buttons.append([
             InlineKeyboardButton(
                 text="🚀 σᴩєɴ ᴍιɴι ᴧᴩᴩ 🚀",
@@ -1427,7 +1524,8 @@ def get_result_buttons(final_url: str, job_url: str) -> InlineKeyboardMarkup:
     ]
 
     has_mini_app = bool(public_url and not public_url.startswith("http://localhost"))
-    if has_mini_app:
+    is_tme_link = bool(public_url and ("t.me/" in public_url or "telegram.me/" in public_url))
+    if has_mini_app and not is_tme_link and public_url.startswith("https://"):
         # PRIMARY BUTTON: 🔵 Copy Link (Auto-copy in Mini App)
         mini_app_copy_url = f"{public_url}/?copy={urllib.parse.quote(final_url)}"
         buttons.append([
@@ -1720,14 +1818,29 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
         if final_msg_id:
             schedule_auto_delete(chat_id, final_msg_id, 150)
     else:
-        err_text = (
-            f"❌ <b>{to_small_caps('Bypass Failed!')}</b>\n\n"
-            f"⚠️ <i>{to_small_caps('The link could not be bypassed or expired.')}</i>\n\n"
-            f"🔗 <b>{to_small_caps('Original Link')}:</b>\n"
-            f"{html.escape(target_url)}\n\n"
-            f"• <i>{to_small_caps('Please check if the link is active and valid.')}</i>\n"
-            f"• <i>{to_small_caps('Tap Retry below to try bypassing again.')}</i>"
-        )
+        err_msg = result.get("message") or "The link could not be bypassed or expired."
+        is_userbot_offline = not engine.userbot_connected or "userbot is offline" in err_msg.lower() or "userbot is not connected" in err_msg.lower()
+
+        if is_userbot_offline:
+            err_text = (
+                f"❌ <b>{to_small_caps('Bypass Failed!')}</b>\n\n"
+                f"⚠️ <b>{to_small_caps('Telethon Userbot Offline')}</b>\n"
+                f"<i>{to_small_caps('The bot cannot send links to bypass engines because Telethon Userbot is not connected.')}</i>\n\n"
+                f"🔧 <b>{to_small_caps('How to Fix (Bot Owner)')}:</b>\n"
+                f"• <i>{to_small_caps('Please set TELEGRAM_SESSION, TELEGRAM_API_ID, and TELEGRAM_API_HASH in your hosting environment (.env).')}</i>\n"
+                f"• <i>{to_small_caps('Send /stats to check live Userbot & provider status.')}</i>\n\n"
+                f"🔗 <b>{to_small_caps('Original Link')}:</b>\n"
+                f"{html.escape(target_url)}"
+            )
+        else:
+            err_text = (
+                f"❌ <b>{to_small_caps('Bypass Failed!')}</b>\n\n"
+                f"⚠️ <i>{to_small_caps(err_msg)}</i>\n\n"
+                f"🔗 <b>{to_small_caps('Original Link')}:</b>\n"
+                f"{html.escape(target_url)}\n\n"
+                f"• <i>{to_small_caps('Please check if the link is active and valid.')}</i>\n"
+                f"• <i>{to_small_caps('Tap Retry below to try bypassing again.')}</i>"
+            )
         reply_markup = get_failed_buttons(target_url)
         if status_msg_id:
             try:
@@ -1923,16 +2036,20 @@ async def run_bot_polling():
                         asyncio.create_task(_run_broadcast_task(bc_text, targets, chat_id, s_msg_id))
 
                     elif text in ("/stats", "/users"):
-                        is_owner = bool(OWNER_ID and user_id == OWNER_ID)
+                        is_owner = bool(not OWNER_ID or user_id == OWNER_ID)
                         if is_owner:
+                            dzhq_mode = f"Group ({DZHQ_GROUP})" if DZHQ_GROUP else "Not Set (Required by DZHQ modders)"
+                            mini_app_status = f"{get_auto_public_url()} (Manual in code)" if MANUAL_MINI_APP_URL else f"{get_auto_public_url()} (Auto)"
                             stats_text = (
-                                f"📊 <b>{to_small_caps('bot statistics')}</b>\n\n"
+                                f"📊 <b>{to_small_caps('bot statistics & status')}</b>\n\n"
+                                f"• 🤖 <b>{to_small_caps('userbot status')}:</b> {'🟢 ' + to_small_caps('online') if engine.userbot_connected else '🔴 ' + to_small_caps('offline')}\n"
                                 f"• 👥 <b>{to_small_caps('total registered users')}:</b> <code>{len(get_registered_users())}</code>\n"
                                 f"• ⚡ <b>{to_small_caps('total bypasses')}:</b> <code>{engine.total_bypasses}</code>\n"
                                 f"• ✅ <b>{to_small_caps('successful')}:</b> <code>{engine.successful_bypasses}</code>\n"
                                 f"• ❌ <b>{to_small_caps('failed')}:</b> <code>{engine.failed_bypasses}</code>\n"
-                                f"• 🤖 <b>{to_small_caps('userbot online')}:</b> <code>{engine.userbot_connected}</code>\n"
-                                f"• 🌐 <b>{to_small_caps('public url')}:</b> {get_auto_public_url()}"
+                                f"• 🎯 <b>{to_small_caps('dzhq provider')}:</b> <code>{DZHQ_BOT}</code> ({dzhq_mode})\n"
+                                f"• 🎯 <b>{to_small_caps('alex provider')}:</b> <code>{ALEX_BOT}</code> (Direct DM)\n"
+                                f"• 🚀 <b>{to_small_caps('mini app url')}:</b> {mini_app_status}"
                             )
                             await bot_api.send_message(chat_id, stats_text, reply_to_message_id=msg.get("message_id"), disable_web_page_preview=True)
                         else:
@@ -2165,24 +2282,37 @@ async def main_async():
                 engine.userbot = userbot
                 engine.userbot_connected = True
 
-                # Resolve DZHQ group entity specifically
-                try:
-                    engine.dzhq_group_entity = await userbot.get_entity(DZHQ_GROUP)
-                    logger.info(f"✅ DZHQ Group resolved: {getattr(engine.dzhq_group_entity, 'title', DZHQ_GROUP)}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not resolve DZHQ Group ({DZHQ_GROUP}): {e}")
+                # Resolve DZHQ group entity if explicitly configured
+                if DZHQ_GROUP:
+                    try:
+                        engine.dzhq_group_entity = await userbot.get_entity(DZHQ_GROUP)
+                        logger.info(f"✅ DZHQ Group resolved: {getattr(engine.dzhq_group_entity, 'title', DZHQ_GROUP)}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not resolve DZHQ Group ({DZHQ_GROUP}): {e}. Note: DZHQ requires this group.")
+                else:
+                    logger.info("ℹ️ DZHQ Group is not configured. (DZHQ bot modders only allow group mode). Alex DM will handle bypasses.")
 
                 try:
                     d_ent = await userbot.get_entity(DZHQ_BOT)
                     engine.dzhq_bot_id = d_ent.id
-                except Exception:
-                    logger.warning(f"⚠️ Could not resolve {DZHQ_BOT}")
+                    logger.info(f"✅ DZHQ Bot resolved: {DZHQ_BOT} (ID: {d_ent.id})")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not resolve {DZHQ_BOT}: {e}")
 
                 try:
                     a_ent = await userbot.get_entity(ALEX_BOT)
                     engine.alex_bot_id = a_ent.id
-                except Exception:
-                    logger.warning(f"⚠️ Could not resolve {ALEX_BOT}")
+                    logger.info(f"✅ Alex Bot resolved: {ALEX_BOT} (ID: {a_ent.id})")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not resolve {ALEX_BOT}: {e}")
+
+                # Auto-prime dialog with Alex DM
+                if ALEX_BOT:
+                    try:
+                        await userbot.send_message(ALEX_BOT, "/start")
+                        logger.info(f"✅ Userbot initiated chat with {ALEX_BOT}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not send /start to {ALEX_BOT}: {e}")
 
                 setup_userbot_handlers(userbot)
                 me = await userbot.get_me()
@@ -2199,6 +2329,8 @@ async def main_async():
 
     # 3. Print Startup Banner
     detected_url = get_auto_public_url()
+    dzhq_flow_desc = f"Group Flow ({DZHQ_GROUP})" if DZHQ_GROUP else "Not set (Requires authorized group)"
+    mini_app_desc = f"{detected_url} (Manual in code)" if MANUAL_MINI_APP_URL else f"{detected_url} (Auto)"
     print(f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ProviderBotz Auto Bypass
@@ -2207,9 +2339,9 @@ Flask: running (Port {PORT})
 Public Bot API: {'online (@' + BOT_USERNAME + ')' if BOT_TOKEN else 'offline'}
 Button Styles: PRIMARY (Blue), SUCCESS (Green), DANGER (Red)
 Telethon Userbot: {'connected' if engine.userbot_connected else 'offline'}
-DZHQ: Group Flow ({DZHQ_BOT} in {DZHQ_GROUP})
+DZHQ: {dzhq_flow_desc}
 Alex DM: DM Flow ({ALEX_BOT})
-Auto Public URL: {detected_url}
+Mini App Link: {mini_app_desc}
 Health: {detected_url}/health
 Mini App: {detected_url}/
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
