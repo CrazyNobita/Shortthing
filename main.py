@@ -65,17 +65,6 @@ def load_env(path: str = ".env"):
 load_env()
 
 # ══════════════════════════════════════════════════════════════
-#  GLOBAL LOGGING SETUP (Available to all modules immediately)
-# ══════════════════════════════════════════════════════════════
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
-)
-logger = logging.getLogger("ProviderBotz")
-logging.getLogger("telethon").setLevel(logging.WARNING)
-
-# ══════════════════════════════════════════════════════════════
 #  MANUAL CONFIGURATION / ম্যানুয়াল কনফিগারেশন (সরাসরি কোডে পেস্ট করুন)
 # ══════════════════════════════════════════════════════════════
 # 🚀 1. MINI APP URL (মিনি অ্যাপ লিংক):
@@ -90,6 +79,9 @@ MANUAL_MINI_APP_URL: str = "https://codenestauth4.onrender.com/live/u13-linkzobo
 # যদি ফাঁকা থাকে, তবে DZHQ গ্রুপ ছাড়া চলবে না এবং প্রাইভেট DM-এর জন্য Alex DM স্বয়ংক্রিয়ভাবে ব্যবহৃত হবে।
 MANUAL_DZHQ_GROUP: Union[int, str, None] = None  # 👈 PASTE DZHQ GROUP ID (-100xxxx) OR USERNAME HERE!
 
+MANUAL_START_IMAGE_URL: str = "https://api.aniwallpaper.workers.dev/random?type=girl"  # 👈 PASTE START IMAGE / BANNER URL HERE! / deafult : random anime girl
+
+
 # ══════════════════════════════════════════════════════════════
 #  SYSTEM CONFIGURATION & CREDENTIALS
 # ══════════════════════════════════════════════════════════════
@@ -103,6 +95,10 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgbpb6q40Yvjw-SeZVyZicW2BX
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
 OWNER_ID_RAW = os.environ.get("OWNER_ID", "7931847651").strip()
 OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW.isdigit() else None
+
+# Start Message Image Priority: MANUAL_START_IMAGE_URL (in code) -> START_IMAGE_URL (env var)
+START_IMAGE_URL: str = (MANUAL_START_IMAGE_URL or os.environ.get("START_IMAGE_URL", "")).strip()
+
 bot_api: Optional[Any] = None
 
 # Telethon Userbot Credentials
@@ -113,6 +109,7 @@ TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBuxr60UxlUBk2Zum8
 
 # External Bypass Bots (Supports DZHQ Group & Alex DM)
 DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
+
 
 # DZHQ Group Priority: MANUAL_DZHQ_GROUP (Code) -> DZHQ_GROUP (Environment Variable)
 _raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "").strip()
@@ -1264,6 +1261,13 @@ class TelegramBotAPI:
         try:
             async with session.post(url, json=data or {}) as resp:
                 result = await resp.json()
+                # Handle Telegram Bot API 429 Flood Wait gracefully
+                if not result.get("ok") and result.get("error_code") == 429:
+                    retry_after = result.get("parameters", {}).get("retry_after", 3)
+                    logger.warning(f"⚠️ Telegram Flood Wait: sleeping {retry_after}s for {method}")
+                    await asyncio.sleep(retry_after + 0.5)
+                    async with session.post(url, json=data or {}) as retry_resp:
+                        return await retry_resp.json()
                 return result
         except Exception as e:
             _trace("BOT_API", f"Error calling {method}: {e}")
@@ -1271,6 +1275,76 @@ class TelegramBotAPI:
 
     async def get_me(self) -> Dict[str, Any]:
         return await self.call("getMe")
+
+    async def send_photo(
+        self,
+        chat_id: Union[int, str],
+        photo: str,
+        caption: Optional[str] = None,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+        reply_to_message_id: Optional[int] = None,
+        parse_mode: str = "HTML",
+        quote: bool = True
+    ) -> Dict[str, Any]:
+        """Send a photo with caption and native colored buttons."""
+        cap_text = wrap_quote(caption) if (quote and parse_mode == "HTML" and caption) else (caption or "")
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "photo": photo,
+            "caption": cap_text,
+            "parse_mode": parse_mode
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup.to_dict()
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
+            payload["reply_parameters"] = {
+                "message_id": reply_to_message_id,
+                "allow_sending_without_reply": True
+            }
+        res = await self.call("sendPhoto", payload)
+        if not res.get("ok"):
+            err_desc = res.get("description", "")
+            # Fallback if reply message not found
+            if "reply" in err_desc.lower() and ("reply_parameters" in payload or "reply_to_message_id" in payload):
+                no_reply_payload = dict(payload)
+                no_reply_payload.pop("reply_parameters", None)
+                no_reply_payload.pop("reply_to_message_id", None)
+                res = await self.call("sendPhoto", no_reply_payload)
+            # Fallback if reply_markup styles not accepted
+            elif "reply_markup" in payload:
+                fallback_payload = dict(payload)
+                fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
+                res = await self.call("sendPhoto", fallback_payload)
+        return res
+
+    async def edit_message_caption(
+        self,
+        chat_id: Union[int, str],
+        message_id: int,
+        caption: str,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+        parse_mode: str = "HTML",
+        quote: bool = True
+    ) -> Dict[str, Any]:
+        """Edit caption of an existing photo/media message."""
+        cap_text = wrap_quote(caption) if (quote and parse_mode == "HTML" and caption) else caption
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "caption": cap_text,
+            "parse_mode": parse_mode
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup.to_dict()
+        res = await self.call("editMessageCaption", payload)
+        if not res.get("ok"):
+            err_desc = res.get("description", "")
+            if "reply_markup" in payload:
+                fallback_payload = dict(payload)
+                fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
+                res = await self.call("editMessageCaption", fallback_payload)
+        return res
 
     async def send_message(
         self,
@@ -1392,8 +1466,8 @@ class TelegramBotAPI:
 
 bot_api: Optional[TelegramBotAPI] = None
 
-def schedule_auto_delete(chat_id: int, message_id: int, delay_seconds: int = 150):
-    """Automatically deletes a message after 2.5 minutes (150 seconds)."""
+def schedule_auto_delete(chat_id: int, message_id: int, delay_seconds: int = 120):
+    """Automatically deletes a message after 2 minutes (120 seconds) completely silently without any warning."""
     async def _deleter():
         try:
             await asyncio.sleep(delay_seconds)
@@ -1446,14 +1520,24 @@ def get_registered_users() -> List[int]:
 # ══════════════════════════════════════════════════════════════
 #  REAL COLORED BUTTON BUILDERS (PRIMARY, SUCCESS, DANGER)
 # ══════════════════════════════════════════════════════════════
-def get_start_buttons() -> InlineKeyboardMarkup:
+def get_start_buttons(user_id: Optional[int] = None) -> InlineKeyboardMarkup:
     """
     Start screen buttons with REAL native Bot API 9.4 colored styles:
-    - Mini App (Success / Green)
+    - Mini App (Success / Green) - includes ?owner=true ONLY for the verified owner ID!
     - Help (Danger / Red) | About (Primary / Blue)
     """
     public_url = get_auto_public_url()
     buttons = []
+
+    # If user is owner, append owner authorization flag so gear icon (⚙️) appears in Mini App
+    is_owner = bool(user_id and OWNER_ID and user_id == OWNER_ID)
+    app_url = public_url
+    if app_url and not app_url.startswith("http://localhost"):
+        sep = "&" if "?" in app_url else "?"
+        if is_owner:
+            app_url = f"{app_url}{sep}owner=true&uid={user_id}"
+        elif user_id:
+            app_url = f"{app_url}{sep}uid={user_id}"
 
     # Mini App Button (always present with start message)
     is_tme_link = bool(public_url and ("t.me/" in public_url or "telegram.me/" in public_url))
@@ -1461,12 +1545,12 @@ def get_start_buttons() -> InlineKeyboardMarkup:
         buttons.append([
             InlineKeyboardButton(
                 text="🚀 σᴩєɴ ᴍιɴι ᴧᴩᴩ 🚀",
-                web_app={"url": public_url},
+                web_app={"url": app_url},
                 style=ButtonStyle.SUCCESS
             )
         ])
     else:
-        target_url = public_url if (public_url and not public_url.startswith("http://localhost")) else "https://t.me"
+        target_url = app_url if (app_url and not app_url.startswith("http://localhost")) else "https://t.me"
         buttons.append([
             InlineKeyboardButton(
                 text="🚀 σᴩєɴ ᴍιɴι ᴧᴩᴩ 🚀",
@@ -1704,6 +1788,10 @@ def extract_input_url(data: Union[Dict[str, Any], str]) -> Optional[str]:
 # ══════════════════════════════════════════════════════════════
 #  TELEGRAM BOT WORKER & LONG POLLING (ALEX BYPASS BOT STYLE)
 # ══════════════════════════════════════════════════════════════
+# Anti-flood & rate limit cooldown tracking
+_USER_MSG_TIMESTAMPS: Dict[int, float] = {}
+_USER_WARN_COOLDOWN: Dict[int, float] = {}
+
 async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_msg_id: Optional[int] = None, first_name: Optional[str] = None):
     """
     Automatically bypasses links with dynamic animated progress frames
@@ -1711,7 +1799,11 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
     """
     allowed, rate_msg = engine.check_user_rate_limit(user_id)
     if not allowed:
-        await bot_api.send_message(chat_id, rate_msg, reply_to_message_id=reply_msg_id)
+        now_ts = time.time()
+        last_warn = _USER_WARN_COOLDOWN.get(user_id, 0)
+        if now_ts - last_warn > 8.0:
+            _USER_WARN_COOLDOWN[user_id] = now_ts
+            await bot_api.send_message(chat_id, rate_msg, reply_to_message_id=reply_msg_id)
         return
 
     job_id, _ = engine.create_job(target_url, user_id=user_id, source="telegram", first_name=first_name)
@@ -1813,10 +1905,12 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
                 disable_web_page_preview=True
             )
 
-        # Auto delete in 2.5 minutes (150 seconds) as requested
+        # Auto delete in 2 minutes (120 seconds) as requested - completely silent, without warning
         final_msg_id = status_msg_id or (sent_res.get("result", {}).get("message_id") if isinstance(sent_res, dict) else None)
         if final_msg_id:
-            schedule_auto_delete(chat_id, final_msg_id, 150)
+            schedule_auto_delete(chat_id, final_msg_id, 120)
+        if reply_msg_id:
+            schedule_auto_delete(chat_id, reply_msg_id, 120)
     else:
         err_msg = result.get("message") or "The link could not be bypassed or expired."
         is_userbot_offline = not engine.userbot_connected or "userbot is offline" in err_msg.lower() or "userbot is not connected" in err_msg.lower()
@@ -1909,6 +2003,21 @@ async def run_bot_polling():
                     if user_id:
                         register_user(user_id)
 
+                    # Anti-spam rate limiting: prevent bot from getting blocked by Telegram flood
+                    now_ts = time.time()
+                    last_msg_ts = _USER_MSG_TIMESTAMPS.get(user_id, 0)
+                    if now_ts - last_msg_ts < 1.2:
+                        warn_ts = _USER_WARN_COOLDOWN.get(user_id, 0)
+                        if now_ts - warn_ts > 10.0:
+                            _USER_WARN_COOLDOWN[user_id] = now_ts
+                            await bot_api.send_message(
+                                chat_id,
+                                f"⚠️ <b>{to_small_caps('slow down!')}</b>\n<i>{to_small_caps('please wait a moment between messages to avoid flooding.')}</i>",
+                                reply_to_message_id=msg.get("message_id")
+                            )
+                        continue
+                    _USER_MSG_TIMESTAMPS[user_id] = now_ts
+
                     # Force Subscription check for private chat users
                     if chat_id > 0 and user_id:
                         is_member = await check_user_fsub(user_id)
@@ -1931,7 +2040,23 @@ async def run_bot_polling():
                             f"{to_small_caps('send any supported shortener link below to bypass instantly.')}\n\n"
                             f"📢 <b>{to_small_caps('official updates')}:</b> @ProviderBotz"
                         )
-                        await bot_api.send_message(chat_id, start_text, reply_markup=get_start_buttons(), reply_to_message_id=msg.get("message_id"), disable_web_page_preview=True)
+                        start_markup = get_start_buttons(user_id=user_id)
+                        sent = False
+                        if START_IMAGE_URL:
+                            try:
+                                photo_res = await bot_api.send_photo(
+                                    chat_id,
+                                    photo=START_IMAGE_URL,
+                                    caption=start_text,
+                                    reply_markup=start_markup,
+                                    reply_to_message_id=msg.get("message_id")
+                                )
+                                if photo_res.get("ok"):
+                                    sent = True
+                            except Exception as e:
+                                logger.warning(f"Could not send start photo: {e}")
+                        if not sent:
+                            await bot_api.send_message(chat_id, start_text, reply_markup=start_markup, reply_to_message_id=msg.get("message_id"), disable_web_page_preview=True)
 
                     elif text == "/help":
                         help_text = (
@@ -2103,7 +2228,10 @@ async def run_bot_polling():
                                 f"{to_small_caps('send any supported shortener link below to bypass instantly.')}\n\n"
                                 f"📢 <b>{to_small_caps('official updates')}:</b> @ProviderBotz"
                             )
-                            await bot_api.edit_message_text(chat_id, msg_id, start_text, reply_markup=get_start_buttons(), disable_web_page_preview=True)
+                            start_btns = get_start_buttons(user_id=user_id)
+                            edit_res = await bot_api.edit_message_text(chat_id, msg_id, start_text, reply_markup=start_btns, disable_web_page_preview=True)
+                            if not edit_res.get("ok"):
+                                await bot_api.edit_message_caption(chat_id, msg_id, start_text, reply_markup=start_btns)
                         else:
                             await bot_api.answer_callback_query(
                                 cq_id,
@@ -2119,7 +2247,10 @@ async def run_bot_polling():
                             f"{to_small_caps('send any supported shortener link below to bypass instantly.')}\n\n"
                             f"📢 <b>{to_small_caps('official updates')}:</b> @ProviderBotz"
                         )
-                        await bot_api.edit_message_text(chat_id, msg_id, start_text, reply_markup=get_start_buttons(), disable_web_page_preview=True)
+                        start_btns = get_start_buttons(user_id=user_id)
+                        edit_res = await bot_api.edit_message_text(chat_id, msg_id, start_text, reply_markup=start_btns, disable_web_page_preview=True)
+                        if not edit_res.get("ok"):
+                            await bot_api.edit_message_caption(chat_id, msg_id, start_text, reply_markup=start_btns)
 
                     elif cq_data == "cmd_help":
                         help_text = (
