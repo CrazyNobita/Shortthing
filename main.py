@@ -65,6 +65,17 @@ def load_env(path: str = ".env"):
 load_env()
 
 # ══════════════════════════════════════════════════════════════
+#  GLOBAL LOGGING SETUP (Available to all modules immediately)
+# ══════════════════════════════════════════════════════════════
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("ProviderBotz")
+logging.getLogger("telethon").setLevel(logging.WARNING)
+
+# ══════════════════════════════════════════════════════════════
 #  MANUAL CONFIGURATION / ম্যানুয়াল কনফিগারেশন (সরাসরি কোডে পেস্ট করুন)
 # ══════════════════════════════════════════════════════════════
 # 🚀 1. MINI APP URL (মিনি অ্যাপ লিংক):
@@ -113,9 +124,8 @@ TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBuxr60UxlUBk2Zum8
 # External Bypass Bots (Supports DZHQ Group & Alex DM)
 DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
 
-
 # DZHQ Group Priority: MANUAL_DZHQ_GROUP (Code) -> DZHQ_GROUP (Environment Variable)
-_raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "").strip()
+_raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "-1003644908415").strip()
 if _raw_dzhq_grp:
     try:
         DZHQ_GROUP: Optional[Union[int, str]] = int(str(_raw_dzhq_grp).strip())
@@ -798,7 +808,8 @@ def setup_userbot_handlers(client: TelegramClient):
     # 1. DZHQ Handler — Operates in authorized Telegram group (as restricted by DZHQ modders)
     async def on_dzhq_message(event):
         msg = event.message
-        text = msg.text or msg.caption or ""
+        # Telethon Message: use text or message or raw_text safely without raising AttributeError
+        text = getattr(msg, 'text', None) or getattr(msg, 'message', None) or getattr(msg, 'raw_text', '') or ""
         if not text:
             return
 
@@ -897,7 +908,8 @@ def setup_userbot_handlers(client: TelegramClient):
     # 2. Alex DM Handler — STRICTLY IN PRIVATE DM
     async def on_alex_message(event):
         msg = event.message
-        text = msg.text or msg.caption or ""
+        # Telethon Message: use text or message or raw_text safely without raising AttributeError
+        text = getattr(msg, 'text', None) or getattr(msg, 'message', None) or getattr(msg, 'raw_text', '') or ""
         if not text:
             return
 
