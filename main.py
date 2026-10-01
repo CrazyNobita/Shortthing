@@ -81,6 +81,9 @@ MANUAL_DZHQ_GROUP: Union[int, str, None] = None  # 👈 PASTE DZHQ GROUP ID (-10
 
 MANUAL_START_IMAGE_URL: str = "https://api.aniwallpaper.workers.dev/random?type=girl"  # 👈 PASTE START IMAGE / BANNER URL HERE! / deafult : random anime girl
 
+# 👑 4. OWNER ID (বট ওনার আইডি):
+MANUAL_OWNER_ID: Union[int, str, None] = 7931847651
+
 
 # ══════════════════════════════════════════════════════════════
 #  SYSTEM CONFIGURATION & CREDENTIALS
