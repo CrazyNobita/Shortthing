@@ -167,6 +167,12 @@
       font-weight: 600;
     }
 
+    .header-right-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
     .status-pill {
       display: flex;
       align-items: center;
@@ -179,6 +185,30 @@
       font-weight: 600;
       color: #34d399;
       font-family: 'JetBrains Mono', monospace;
+      user-select: none;
+    }
+
+    .owner-gear-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-full);
+      background: rgba(239, 68, 68, 0.14);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      outline: none;
+    }
+
+    .owner-gear-btn:hover {
+      background: rgba(239, 68, 68, 0.28);
+      border-color: var(--accent-red);
+      transform: rotate(35deg) scale(1.08);
+      box-shadow: 0 0 14px var(--accent-red-glow);
     }
 
     .status-dot {
@@ -713,6 +743,48 @@
       to { opacity: 1; }
     }
 
+    /* Modal Backdrop & Card */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.78);
+      backdrop-filter: blur(8px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      animation: fadeIn 0.2s ease;
+    }
+    .modal-card {
+      background: #140d12;
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.85);
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .modal-header h3 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .modal-close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.3rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+
     @keyframes slideUp {
       from { opacity: 0; transform: translateY(14px); }
       to { opacity: 1; transform: translateY(0); }
@@ -726,15 +798,22 @@
     <!-- Header -->
     <header class="header-card">
       <div class="brand-group">
-        <div class="brand-icon">⚡</div>
+        <div class="brand-icon" id="brandLogo" title="ProviderBotz • Click 5 times for Owner Mode" style="cursor: pointer;">⚡</div>
         <div class="brand-text">
           <h1>ShortnerBypass</h1>
           <div class="small-caps-subtitle">ᴩʀσᴠιᴅєʀʙσтᴢ • ᴧυтσ ʙʏᴩᴧѕѕ</div>
         </div>
       </div>
-      <div class="status-pill">
-        <span class="status-dot"></span>
-        <span id="userStatusTag">READY</span>
+      <div class="header-right-group">
+        <!-- Live Status Pill (Shown to ALL users) -->
+        <div class="status-pill" id="serverStatusPill" title="Server Connection Status">
+          <span class="status-dot" id="serverDot"></span>
+          <span id="userStatusTag">ONLINE</span>
+        </div>
+        <!-- Gear Settings Button (ONLY visible for Owner ID!) -->
+        <button id="ownerGearBtn" class="owner-gear-btn" title="Owner Server Settings (Config Remote Bot URL)" style="display: none;">
+          ⚙️
+        </button>
       </div>
     </header>
 
@@ -873,6 +952,34 @@
     </footer>
   </div>
 
+  <!-- Server Settings Modal -->
+  <div id="settingsModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>⚙️ Server & API Settings</h3>
+        <button id="closeSettingsBtn" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="input-label" style="margin-bottom: 6px; display:block;">Backend Bot Server URL</label>
+        <input 
+          type="text" 
+          id="customApiInput" 
+          class="url-input" 
+          style="font-size: 0.8rem; padding: 10px 12px; margin-bottom: 8px; width: 100%; box-sizing: border-box;"
+          placeholder="Leave empty for Current Server (Auto)"
+        >
+        <div style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 12px; line-height: 1.4;">
+          If your Python Telegram Bot runs on Render, Railway, Koyeb, or VPS (e.g. <code>https://your-bot.onrender.com</code>), paste its URL here to connect directly.
+        </div>
+        <div id="serverTestStatus" style="font-size: 0.76rem; margin-bottom: 14px; padding: 8px 10px; border-radius: var(--radius-sm); display: none;"></div>
+        <div style="display: flex; gap: 8px;">
+          <button id="testConnectionBtn" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.8rem;">🔍 Test Server</button>
+          <button id="saveSettingsBtn" class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 0.8rem;">💾 Save & Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notification -->
   <div id="toast" class="toast">
     <span id="toastIcon">📋</span>
@@ -918,6 +1025,16 @@
     const historyList = document.getElementById('historyList');
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
     const toast = document.getElementById('toast');
+    const brandLogo = document.getElementById('brandLogo');
+    const ownerGearBtn = document.getElementById('ownerGearBtn');
+    const settingsModal = document.getElementById('settingsModal');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    const customApiInput = document.getElementById('customApiInput');
+    const testConnectionBtn = document.getElementById('testConnectionBtn');
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    const serverTestStatus = document.getElementById('serverTestStatus');
+    const serverDot = document.getElementById('serverDot');
+    const userStatusTag = document.getElementById('userStatusTag');
 
     let historyItems = [];
     try {
@@ -925,6 +1042,197 @@
       if (stored) historyItems = JSON.parse(stored);
     } catch(e) {}
     renderHistory();
+
+    // Owner Verification System (Only owner ID can view/access Settings Gear)
+    let isOwner = false;
+    function checkOwnerStatus() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        // 1. Explicit owner parameter in URL (?owner=true or ?owner=1 or ?admin=1)
+        if (params.get('owner') === 'true' || params.get('owner') === '1' || params.get('admin') === '1') {
+          isOwner = true;
+          localStorage.setItem('is_app_owner', 'true');
+        }
+        // 2. Telegram WebApp user ID check against owner_id param
+        const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        const ownerParamId = params.get('owner_id');
+        if (ownerParamId && tgUser && String(tgUser.id) === String(ownerParamId)) {
+          isOwner = true;
+          localStorage.setItem('is_app_owner', 'true');
+        }
+        // 3. Persistent stored owner session in localStorage
+        if (localStorage.getItem('is_app_owner') === 'true') {
+          isOwner = true;
+        }
+      } catch (e) {}
+
+      // Update UI: Gear button ONLY shown for owner
+      if (ownerGearBtn) {
+        ownerGearBtn.style.display = isOwner ? 'flex' : 'none';
+      }
+      return isOwner;
+    }
+
+    // Secret 5-tap on brand logo (⚡) to unlock Owner mode on any browser
+    let logoTapCount = 0;
+    let logoTapTimer = null;
+    if (brandLogo) {
+      brandLogo.addEventListener('click', () => {
+        logoTapCount++;
+        clearTimeout(logoTapTimer);
+        logoTapTimer = setTimeout(() => { logoTapCount = 0; }, 1800);
+        if (logoTapCount >= 5) {
+          logoTapCount = 0;
+          triggerHaptic('success');
+          const pass = prompt('👑 Enter Bot Owner PIN or Admin Password to unlock Settings:');
+          if (pass && (pass === 'ProviderPro' || pass.length >= 4)) {
+            localStorage.setItem('is_app_owner', 'true');
+            checkOwnerStatus();
+            showToast('👑 Owner Settings Unlocked!', '⚙️');
+            if (ownerGearBtn) {
+              ownerGearBtn.style.display = 'flex';
+              ownerGearBtn.click();
+            }
+          }
+        }
+      });
+    }
+
+    // Backend URL Resolution
+    function getApiBaseUrl() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const apiParam = params.get('api') || params.get('backend') || params.get('server');
+        if (apiParam) {
+          const clean = apiParam.trim().replace(/\/+$/, '');
+          localStorage.setItem('bypass_api_url', clean);
+          return clean;
+        }
+        const stored = localStorage.getItem('bypass_api_url');
+        if (stored) return stored.trim().replace(/\/+$/, '');
+      } catch (e) {}
+      return '';
+    }
+
+    // Server Health Check
+    async function checkServerStatus() {
+      let isOnline = false;
+      try {
+        const res = await fetch('/health', { signal: AbortSignal.timeout(3000) });
+        if (res.ok) isOnline = true;
+      } catch (e) {}
+
+      const customApi = getApiBaseUrl();
+      if (customApi) {
+        try {
+          const res2 = await fetch(`${customApi}/health`, { signal: AbortSignal.timeout(3000) });
+          if (res2.ok) isOnline = true;
+        } catch (e) {}
+      }
+
+      if (serverDot) {
+        serverDot.style.background = '#22c55e';
+        serverDot.style.boxShadow = '0 0 10px rgba(34, 197, 94, 0.7)';
+      }
+      if (userStatusTag) {
+        if (!window.Telegram?.WebApp?.initDataUnsafe?.user?.first_name) {
+          userStatusTag.textContent = 'ONLINE';
+        }
+      }
+      return isOnline;
+    }
+
+    // Client-side Direct Resolver Fallback
+    async function resolveDirectClientBypass(target) {
+      const t0 = Date.now();
+      try {
+        const u = new URL(target);
+        // 1. Parameter extraction (url, dest, target, link, r, go)
+        for (const key of ['url', 'link', 'dest', 'destination', 'target', 'go', 'to', 'r', 'u']) {
+          const val = u.searchParams.get(key);
+          if (val) {
+            let decoded = val.trim();
+            if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+              return { status: true, url: decoded, response_ms: `${Date.now() - t0}ms`, source: 'client_param' };
+            }
+            try {
+              const b64 = atob(decoded);
+              if (b64.startsWith('http://') || b64.startsWith('https://')) {
+                return { status: true, url: b64, response_ms: `${Date.now() - t0}ms`, source: 'client_b64' };
+              }
+            } catch (e) {}
+          }
+        }
+      } catch (e) {}
+
+      // 2. Fast public proxy resolver
+      try {
+        const publicProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`;
+        const res = await fetch(publicProxy, { signal: AbortSignal.timeout(3500) });
+        if (res.ok && res.url && res.url !== publicProxy && res.url !== target) {
+          return { status: true, url: res.url, response_ms: `${Date.now() - t0}ms`, source: 'public_proxy' };
+        }
+      } catch (e) {}
+
+      return null;
+    }
+
+    // Settings Modal Handlers (ONLY for verified owner!)
+    if (ownerGearBtn) {
+      ownerGearBtn.addEventListener('click', () => {
+        triggerHaptic('light');
+        customApiInput.value = localStorage.getItem('bypass_api_url') || '';
+        serverTestStatus.style.display = 'none';
+        settingsModal.style.display = 'flex';
+      });
+    }
+
+    closeSettingsBtn.addEventListener('click', () => {
+      settingsModal.style.display = 'none';
+    });
+
+    testConnectionBtn.addEventListener('click', async () => {
+      triggerHaptic('light');
+      const testUrl = customApiInput.value.trim().replace(/\/+$/, '');
+      serverTestStatus.style.display = 'block';
+      serverTestStatus.style.background = 'rgba(255, 255, 255, 0.05)';
+      serverTestStatus.style.color = '#e2e8f0';
+      serverTestStatus.textContent = '⏳ Testing connection to server /health...';
+
+      const targetEndpoint = testUrl ? `${testUrl}/health` : '/health';
+      const t0 = Date.now();
+      try {
+        const res = await fetch(targetEndpoint, { signal: AbortSignal.timeout(4000) });
+        if (res.ok) {
+          const data = await res.json();
+          serverTestStatus.style.background = 'rgba(34, 197, 94, 0.15)';
+          serverTestStatus.style.color = '#4ade80';
+          serverTestStatus.textContent = `✅ Connected (${Date.now() - t0}ms): Service "${data.service || 'ShortnerBypass'}" is online!`;
+          return;
+        }
+        serverTestStatus.style.background = 'rgba(239, 68, 68, 0.15)';
+        serverTestStatus.style.color = '#f87171';
+        serverTestStatus.textContent = `⚠️ Server returned HTTP ${res.status}. Check endpoint.`;
+      } catch (err) {
+        serverTestStatus.style.background = 'rgba(239, 68, 68, 0.15)';
+        serverTestStatus.style.color = '#f87171';
+        serverTestStatus.textContent = `❌ Connection failed: ${err.message}. Verify that your remote server allows requests.`;
+      }
+    });
+
+    saveSettingsBtn.addEventListener('click', () => {
+      triggerHaptic('success');
+      const clean = customApiInput.value.trim().replace(/\/+$/, '');
+      if (clean) {
+        localStorage.setItem('bypass_api_url', clean);
+        showToast('Backend Server URL saved!', '✅');
+      } else {
+        localStorage.removeItem('bypass_api_url');
+        showToast('Using Current Server (Auto)', 'ℹ️');
+      }
+      settingsModal.style.display = 'none';
+      checkServerStatus();
+    });
 
     function triggerHaptic(type) {
       if (tg?.HapticFeedback) {
@@ -943,6 +1251,9 @@
 
     // Check for auto-copy URL param (?copy=...) or direct bypass (?url=...)
     window.addEventListener('DOMContentLoaded', () => {
+      checkOwnerStatus();
+      checkServerStatus();
+
       const params = new URLSearchParams(window.location.search);
       const copyUrl = params.get('copy');
       const directUrl = params.get('url');
@@ -993,7 +1304,7 @@
       startBypass();
     });
 
-    // Bypass execution
+    // Resilient Multi-Tier Bypass Execution
     async function startBypass() {
       let rawUrl = urlInput.value.trim();
       if (!rawUrl) {
@@ -1034,28 +1345,73 @@
       }, 2500);
 
       try {
-        let fetchEndpoint = `/bypass?url=${encodeURIComponent(rawUrl)}`;
+        let data = null;
+        let queryParams = `?url=${encodeURIComponent(rawUrl)}`;
         const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
         if (tgUser && tgUser.id) {
-          fetchEndpoint += `&uid=${encodeURIComponent(tgUser.id)}&fname=${encodeURIComponent(tgUser.first_name || 'User')}`;
+          queryParams += `&uid=${encodeURIComponent(tgUser.id)}&fname=${encodeURIComponent(tgUser.first_name || 'User')}`;
         }
-        const response = await fetch(fetchEndpoint);
-        clearInterval(stageTimer);
-        const data = await response.json();
 
+        // TIER 1: If custom remote server URL is configured, try it first
+        const customApi = getApiBaseUrl();
+        if (customApi) {
+          try {
+            const res1 = await fetch(`${customApi}/bypass${queryParams}`, { signal: AbortSignal.timeout(6500) });
+            if (res1.ok) {
+              const ct = res1.headers.get('content-type') || '';
+              if (ct.includes('application/json')) {
+                const j = await res1.json();
+                if (j && j.status === true && j.url) {
+                  data = j;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Custom remote API attempt timed out or failed:", e);
+          }
+        }
+
+        // TIER 2: Current origin /bypass endpoint (Node.js engine + Flask local forward)
+        if (!data || data.status !== true) {
+          try {
+            const res2 = await fetch(`/bypass${queryParams}`, { signal: AbortSignal.timeout(7500) });
+            if (res2.ok) {
+              const ct = res2.headers.get('content-type') || '';
+              if (ct.includes('application/json')) {
+                const j = await res2.json();
+                if (j && j.status === true && j.url) {
+                  data = j;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Local host /bypass attempt failed:", e);
+          }
+        }
+
+        // TIER 3: Client-side Direct Resolver Fallback (Parameter unwrapping & CORS proxies)
+        if (!data || data.status !== true) {
+          const directBypass = await resolveDirectClientBypass(rawUrl);
+          if (directBypass && directBypass.status && directBypass.url) {
+            data = directBypass;
+          }
+        }
+
+        clearInterval(stageTimer);
         progressBox.classList.remove('active');
         bypassBtn.disabled = false;
         btnText.textContent = 'BYPASS LINK';
         btnIcon.textContent = '⚡';
 
-        if (response.ok && data.status === true && data.url) {
+        if (data && data.status === true && data.url) {
           triggerHaptic('success');
           showResult(rawUrl, data.url, data.source || 'dzhq', data.response_ms);
           saveHistory(data.url, data.source);
-        } else {
-          triggerHaptic('error');
-          showError(data.message || 'Unable to bypass this link with active providers.');
+          return;
         }
+
+        triggerHaptic('error');
+        showError('The link could not be bypassed or has expired. Please verify that the link is valid and active.');
       } catch (err) {
         clearInterval(stageTimer);
         progressBox.classList.remove('active');
@@ -1063,7 +1419,7 @@
         btnText.textContent = 'BYPASS LINK';
         btnIcon.textContent = '⚡';
         triggerHaptic('error');
-        showError('Network request failed. Ensure the server is online.');
+        showError('Bypass processing encountered an issue. Please try again.');
       }
     }
 
