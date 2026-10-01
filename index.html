@@ -801,7 +801,7 @@
         <div class="brand-icon" id="brandLogo" title="ProviderBotz • Click 5 times for Owner Mode" style="cursor: pointer;">⚡</div>
         <div class="brand-text">
           <h1>ShortnerBypass</h1>
-          <div class="small-caps-subtitle">ᴩʀσᴠιᴅєʀʙσтᴢ • ᴧυтσ ʙʏᴩᴧѕѕ</div>
+          <div class="small-caps-subtitle">ᴩʀσᴠιᴅєʀʙσтᴢ • ᴠ4.0 ᴧυтσ ʙʏᴩᴧѕѕ</div>
         </div>
       </div>
       <div class="header-right-group">
@@ -917,10 +917,21 @@
           <span>❌</span>
           <span>ʙʏᴘᴀѕѕ ꜰαιʟєᴅ</span>
         </div>
-        <div id="errorText" class="error-text">The link could not be bypassed right now. All promotional ads and intermediate messages are filtered. Please verify the link.</div>
-        <button id="retryErrorBtn" class="btn btn-danger" style="padding: 10px; font-size: 0.82rem;">
-          🔄 Retry Bypass
-        </button>
+        <div id="errorText" class="error-text">Unable to bypass this link with active providers.</div>
+        <div class="error-details" id="errorDetails" style="font-size: 0.78rem; opacity: 0.85; margin: 8px 0; line-height: 1.4; color: #fca5a5;">
+          The shortener domain is either not supported by active bypass bots, has expired, or requires human verification.
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;">
+          <button id="retryErrorBtn" class="btn btn-danger" style="flex: 1; min-width: 100px; padding: 9px; font-size: 0.82rem;">
+            🔄 Retry
+          </button>
+          <a id="openOriginalBtn" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="flex: 1; min-width: 120px; padding: 9px; font-size: 0.82rem; text-align: center; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;">
+            🌐 Open Direct
+          </a>
+          <button id="copyOriginalBtn" class="btn btn-secondary" style="padding: 9px 12px; font-size: 0.82rem;">
+            📋 Copy
+          </button>
+        </div>
       </div>
     </main>
 
@@ -1021,7 +1032,10 @@
     const resetBtn = document.getElementById('resetBtn');
     const errorCard = document.getElementById('errorCard');
     const errorText = document.getElementById('errorText');
+    const errorDetails = document.getElementById('errorDetails');
     const retryErrorBtn = document.getElementById('retryErrorBtn');
+    const openOriginalBtn = document.getElementById('openOriginalBtn');
+    const copyOriginalBtn = document.getElementById('copyOriginalBtn');
     const historyList = document.getElementById('historyList');
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
     const toast = document.getElementById('toast');
@@ -1053,10 +1067,10 @@
           isOwner = true;
           localStorage.setItem('is_app_owner', 'true');
         }
-        // 2. Telegram WebApp user ID check against owner_id param
+        // 2. Telegram WebApp user ID check against owner_id param or default owner ID 7931847651
         const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
         const ownerParamId = params.get('owner_id');
-        if (ownerParamId && tgUser && String(tgUser.id) === String(ownerParamId)) {
+        if (tgUser && (String(tgUser.id) === '7931847651' || (ownerParamId && String(tgUser.id) === String(ownerParamId)))) {
           isOwner = true;
           localStorage.setItem('is_app_owner', 'true');
         }
@@ -1147,8 +1161,8 @@
       const t0 = Date.now();
       try {
         const u = new URL(target);
-        // 1. Parameter extraction (url, dest, target, link, r, go)
-        for (const key of ['url', 'link', 'dest', 'destination', 'target', 'go', 'to', 'r', 'u']) {
+        // 1. Parameter extraction (url, dest, target, link, r, go, redirect, etc.)
+        for (const key of ['url', 'link', 'dest', 'destination', 'target', 'go', 'to', 'r', 'u', 'redirect', 'out', 'next', 'dl', 'file', 'download']) {
           const val = u.searchParams.get(key);
           if (val) {
             let decoded = val.trim();
@@ -1156,7 +1170,9 @@
               return { status: true, url: decoded, response_ms: `${Date.now() - t0}ms`, source: 'client_param' };
             }
             try {
-              const b64 = atob(decoded);
+              const sanitized = decoded.replace(/-/g, '+').replace(/_/g, '/');
+              const pad = '='.repeat((4 - (sanitized.length % 4)) % 4);
+              const b64 = atob(sanitized + pad);
               if (b64.startsWith('http://') || b64.startsWith('https://')) {
                 return { status: true, url: b64, response_ms: `${Date.now() - t0}ms`, source: 'client_b64' };
               }
@@ -1344,6 +1360,7 @@
         }
       }, 2500);
 
+      let lastServerMsg = '';
       try {
         let data = null;
         let queryParams = `?url=${encodeURIComponent(rawUrl)}`;
@@ -1357,13 +1374,13 @@
         if (customApi) {
           try {
             const res1 = await fetch(`${customApi}/bypass${queryParams}`, { signal: AbortSignal.timeout(6500) });
-            if (res1.ok) {
-              const ct = res1.headers.get('content-type') || '';
-              if (ct.includes('application/json')) {
-                const j = await res1.json();
-                if (j && j.status === true && j.url) {
-                  data = j;
-                }
+            const ct = res1.headers.get('content-type') || '';
+            if (ct.includes('application/json')) {
+              const j = await res1.json();
+              if (j && j.status === true && j.url) {
+                data = j;
+              } else if (j && j.message) {
+                lastServerMsg = j.message;
               }
             }
           } catch (e) {
@@ -1375,13 +1392,13 @@
         if (!data || data.status !== true) {
           try {
             const res2 = await fetch(`/bypass${queryParams}`, { signal: AbortSignal.timeout(7500) });
-            if (res2.ok) {
-              const ct = res2.headers.get('content-type') || '';
-              if (ct.includes('application/json')) {
-                const j = await res2.json();
-                if (j && j.status === true && j.url) {
-                  data = j;
-                }
+            const ct = res2.headers.get('content-type') || '';
+            if (ct.includes('application/json')) {
+              const j = await res2.json();
+              if (j && j.status === true && j.url) {
+                data = j;
+              } else if (j && j.message) {
+                lastServerMsg = j.message;
               }
             }
           } catch (e) {
@@ -1411,7 +1428,7 @@
         }
 
         triggerHaptic('error');
-        showError('The link could not be bypassed or has expired. Please verify that the link is valid and active.');
+        showError(lastServerMsg || 'Unable to bypass this link with active providers.', rawUrl);
       } catch (err) {
         clearInterval(stageTimer);
         progressBox.classList.remove('active');
@@ -1419,7 +1436,7 @@
         btnText.textContent = 'BYPASS LINK';
         btnIcon.textContent = '⚡';
         triggerHaptic('error');
-        showError('Bypass processing encountered an issue. Please try again.');
+        showError('Bypass processing encountered an issue. Please try again.', rawUrl);
       }
     }
 
@@ -1440,8 +1457,24 @@
       resultCard.classList.add('active');
     }
 
-    function showError(msg) {
+    function showError(msg, originalLink) {
       errorText.textContent = msg;
+      if (originalLink) {
+        if (openOriginalBtn) {
+          openOriginalBtn.href = originalLink;
+          openOriginalBtn.style.display = 'inline-flex';
+        }
+        if (copyOriginalBtn) {
+          copyOriginalBtn.style.display = 'inline-block';
+          copyOriginalBtn.onclick = () => {
+            copyLinkToClipboard(originalLink);
+            showToast('Original link copied!', '📋');
+          };
+        }
+      } else {
+        if (openOriginalBtn) openOriginalBtn.style.display = 'none';
+        if (copyOriginalBtn) copyOriginalBtn.style.display = 'none';
+      }
       errorCard.classList.add('active');
     }
 
