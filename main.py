@@ -28,6 +28,7 @@ import shutil
 import platform
 import stat
 import subprocess
+import base64
 import urllib.request
 import urllib.parse
 from enum import Enum
@@ -82,7 +83,7 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 # কোড থেকেই সরাসরি আপনার টেলিগ্রাম মিনি অ্যাপ লিংক বা ওয়েব ডোমেইন পেস্ট করতে পারেন:
 # উদাহরণ: "https://t.me/YourBot/app" অথবা "https://your-domain.run.app"
 # যদি ফাঁকা ("") থাকে, তবে এটি অটো-ডিটেক্ট বা হোস্টিং এনভায়রনমেন্ট ভ্যারিয়েবল (PUBLIC_URL) ব্যবহার করবে।
-MANUAL_MINI_APP_URL: str = "https://codenestauth4.onrender.com/live/u13-linkzobot-e35f97/"  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
+MANUAL_MINI_APP_URL: str = ""  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
 
 # 👥 2. DZHQ GROUP (ডিজেডএইচকিউ গ্রুপ আইডি / ইউজারনেম):
 # DZHQ Bot (@DZHQ_BypassBot) মডারদের নিয়মানুযায়ী শুধুমাত্র অনুমোদিত গ্রুপে কাজ করে (DM-এ কাজ করে না)।
@@ -90,11 +91,13 @@ MANUAL_MINI_APP_URL: str = "https://codenestauth4.onrender.com/live/u13-linkzobo
 # যদি ফাঁকা থাকে, তবে DZHQ গ্রুপ ছাড়া চলবে না এবং প্রাইভেট DM-এর জন্য Alex DM স্বয়ংক্রিয়ভাবে ব্যবহৃত হবে।
 MANUAL_DZHQ_GROUP: Union[int, str, None] = None  # 👈 PASTE DZHQ GROUP ID (-100xxxx) OR USERNAME HERE!
 
-MANUAL_START_IMAGE_URL: str = "https://api.aniwallpaper.workers.dev/random?type=girl"  # 👈 PASTE START IMAGE / BANNER URL HERE! / deafult : random anime girl
+# 🖼️ 3. START MESSAGE IMAGE (স্টার্ট মেসেজের ফটো / ব্যানার লিংক):
+# টেলিগ্রাম /start মেসেজের সাথে সুন্দর ব্যানার বা ফটো যুক্ত করার জন্য নিচে ছবির লিংক দিন (URL e.g. Telegraph/Imgur/CDN link):
+# ডিফল্ট: র্যান্ডম এনিমে গার্ল আর্ট (v4.0)
+MANUAL_START_IMAGE_URL: str = "https://api.aniwallpaper.workers.dev/random?type=girl"  # 👈 PASTE START IMAGE / BANNER URL HERE!
 
 # 👑 4. OWNER ID (বট ওনার আইডি):
-MANUAL_OWNER_ID: Union[int, str, None] = 7931847651
-
+MANUAL_OWNER_ID: Union[int, str, None] = 7931847651  # 👈 YOUR TELEGRAM ID HERE (e.g. 7931847651)
 
 # ══════════════════════════════════════════════════════════════
 #  SYSTEM CONFIGURATION & CREDENTIALS
@@ -107,8 +110,10 @@ FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 # Public Bot Credentials
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgbpb6q40Yvjw-SeZVyZicW2BXk-1kS0E").strip()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
-OWNER_ID_RAW = os.environ.get("OWNER_ID", "7931847651").strip()
-OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW.isdigit() else None
+
+# Owner ID Priority: MANUAL_OWNER_ID (in code) -> OWNER_ID (env var)
+_raw_owner = MANUAL_OWNER_ID if MANUAL_OWNER_ID is not None and str(MANUAL_OWNER_ID).strip() else os.environ.get("OWNER_ID", "7931847651").strip()
+OWNER_ID = int(_raw_owner) if str(_raw_owner).isdigit() else 7931847651
 
 # Start Message Image Priority: MANUAL_START_IMAGE_URL (in code) -> START_IMAGE_URL (env var)
 START_IMAGE_URL: str = (MANUAL_START_IMAGE_URL or os.environ.get("START_IMAGE_URL", "")).strip()
@@ -117,7 +122,7 @@ bot_api: Optional[Any] = None
 
 # Telethon Userbot Credentials
 TELEGRAM_API_ID_RAW = os.environ.get("TELEGRAM_API_ID", "36805393").strip()
-TELEGRAM_API_ID = int(TELEGRAM_API_ID_RAW) if TELEGRAM_API_ID_RAW.isdigit() else 0
+TELEGRAM_API_ID = int(TELEGRAM_API_ID_RAW) if TELEGRAM_API_ID_RAW.isdigit() else 36805393
 TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
 TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBuxr60UxlUBk2Zum8nPSQPKmbKz7twICbgRo7t-Tq39y3HX_qdKGe_SawQjfw-n54MX5WRrosnxd1hONY4y0xxY-4nad14WibbTDA57EIjNTLxnAyD10mbhdq79RYK6RndsVa_GwQ8WVktjHo_PrFXEPmZdz1xj6enGCQtv9qb7niVhKRhqEE-Ehtwz2vBkd4snLYaJOi9TXDOpYYK8YSgU9q16ySIDd-xEdjz4Ukx4_yIof6vyALxTDB9zYXvobSOQ3biPr1O7n1P-4-qp4cNT5QjqDHnX5zSpoolMSqMJjrskErbueP2NHVZney963xb49Fr_k4VthPNqSfuJPDILk=").strip()
 
@@ -125,7 +130,7 @@ TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBuxr60UxlUBk2Zum8
 DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
 
 # DZHQ Group Priority: MANUAL_DZHQ_GROUP (Code) -> DZHQ_GROUP (Environment Variable)
-_raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "-1003644908415").strip()
+_raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "").strip()
 if _raw_dzhq_grp:
     try:
         DZHQ_GROUP: Optional[Union[int, str]] = int(str(_raw_dzhq_grp).strip())
@@ -485,6 +490,93 @@ def extract_valid_urls_from_text(text: str, original_url: str = "") -> List[str]
                 result.append(c)
     return result
 
+def extract_query_param_redirect(target_url: str) -> Optional[str]:
+    """Unwrap destination URLs hidden in query parameters, including base64 and nested encodings."""
+    try:
+        parsed = urllib.parse.urlsplit(target_url)
+        qs = urllib.parse.parse_qs(parsed.query)
+        for key in ('url', 'link', 'dest', 'destination', 'target', 'go', 'to', 'r', 'u', 'redirect', 'out', 'next', 'dl', 'file', 'download'):
+            if key in qs:
+                for val in qs[key]:
+                    val = val.strip()
+                    if val.startswith(('http://', 'https://')):
+                        if is_valid_bypassed_destination(val, target_url):
+                            return val
+                    # Try base64 decoding
+                    try:
+                        pad = '=' * ((4 - len(val) % 4) % 4)
+                        b64 = base64.b64decode((val + pad).encode('ascii')).decode('utf-8', errors='ignore').strip()
+                        if b64.startswith(('http://', 'https://')):
+                            if is_valid_bypassed_destination(b64, target_url):
+                                return b64
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return None
+
+async def fast_direct_bypass(target_url: str) -> Optional[str]:
+    """
+    High-speed direct unshortening and redirect bypass engine:
+    1. Query param & Base64 parameter decoding
+    2. Multi-hop HTTP redirect following with modern browser headers
+    3. HTML meta-refresh & window.location JavaScript redirect extraction
+    """
+    # 1. Parameter extraction
+    param_res = extract_query_param_redirect(target_url)
+    if param_res:
+        return param_res
+
+    # 2. HTTP redirect follow
+    current = target_url
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.google.com/"
+    }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            for _ in range(8):
+                try:
+                    async with session.get(current, allow_redirects=False) as resp:
+                        loc = resp.headers.get("Location")
+                        if loc and resp.status in (301, 302, 303, 307, 308):
+                            cand = urllib.parse.urljoin(current, loc)
+                            if cand != target_url:
+                                current = cand
+                                continue
+
+                        if resp.status == 200:
+                            text = await resp.text(errors="ignore")
+                            # Meta refresh
+                            m_meta = re.search(r'<meta[^>]*http-equiv=["\']?refresh["\']?[^>]*content=["\']?[0-9]*;\s*url=([^"\'>]+)', text, re.I)
+                            if m_meta:
+                                cand = urllib.parse.urljoin(current, m_meta.group(1).strip())
+                                if is_valid_bypassed_destination(cand, target_url):
+                                    current = cand
+                                    continue
+
+                            # JS location
+                            m_js = re.search(r'window\.location(?:\.href|\.replace)?\s*=\s*["\'](https?://[^"\']+)["\']', text, re.I)
+                            if m_js:
+                                cand = m_js.group(1).strip()
+                                if is_valid_bypassed_destination(cand, target_url):
+                                    current = cand
+                                    continue
+                        break
+                except Exception:
+                    break
+    except Exception:
+        pass
+
+    if current != target_url and is_valid_bypassed_destination(current, target_url):
+        return current
+
+    return None
+
 # ══════════════════════════════════════════════════════════════
 #  PARSERS (DZHQ GROUP & ALEX DM)
 # ══════════════════════════════════════════════════════════════
@@ -707,6 +799,22 @@ class JobState:
     FAILED = "FAILED"
     TIMEOUT = "TIMEOUT"
 
+def build_owner_log_markup(user_id: Optional[int], target_url: str, final_url: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
+    """Generates direct DM button and quick link buttons for owner audit logs."""
+    keyboard = []
+    if user_id:
+        keyboard.append([
+            InlineKeyboardButton(f"👤 Direct DM User ({user_id})", url=f"tg://user?id={user_id}")
+        ])
+    row = []
+    if final_url and final_url.startswith(("http://", "https://")):
+        row.append(InlineKeyboardButton("🎯 Bypassed Link", url=final_url))
+    if target_url and target_url.startswith(("http://", "https://")):
+        row.append(InlineKeyboardButton("🔗 Original Link", url=target_url))
+    if row:
+        keyboard.append(row)
+    return InlineKeyboardMarkup(keyboard) if keyboard else None
+
 class BypassEngine:
     def __init__(self):
         self.active_jobs: Dict[str, Dict[str, Any]] = {}
@@ -786,11 +894,16 @@ class BypassEngine:
             if job_id in self.alex_dm_queue:
                 self.alex_dm_queue.remove(job_id)
 
-    async def log_to_owner(self, text: str):
+    async def log_to_owner(self, text: str, reply_markup: Optional[Union[InlineKeyboardMarkup, Dict[str, Any]]] = None):
         logger.info(f"[OWNER LOG] {text}")
         if bot_api and OWNER_ID:
             try:
-                await bot_api.send_message(OWNER_ID, f"🛡 <b>[ProviderBotz Audit]</b>\n{text}", disable_web_page_preview=True)
+                await bot_api.send_message(
+                    OWNER_ID,
+                    f"🛡 <b>[ProviderBotz Audit v4.0]</b>\n\n{text}",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
             except Exception as e:
                 _trace("LOG", f"Failed to deliver log to owner: {e}")
 
@@ -981,6 +1094,45 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
     target_url = job["url"]
     t0 = time.time()
 
+    # Priority 0: Check fast direct redirect / query parameter unshortener
+    try:
+        fast_res = await fast_direct_bypass(target_url)
+        if fast_res and is_valid_bypassed_destination(fast_res, target_url):
+            duration_ms = int((time.time() - t0) * 1000)
+            engine.total_bypasses += 1
+            engine.successful_bypasses += 1
+            job["state"] = JobState.RESULT_FOUND
+            job["final_url"] = fast_res
+            job["provider"] = "direct_resolver"
+
+            user_id_val = job.get("user_id")
+            first_name_val = job.get("first_name") or "User"
+            first_name_esc = html.escape(str(first_name_val))
+            user_mention = f'<a href="tg://user?id={user_id_val}">{first_name_esc}</a> [<code>{user_id_val}</code>]' if user_id_val else f"<code>{first_name_esc}</code>"
+            log_entry = (
+                f"✅ <b>Bypass Success (Direct Fast v4.0)</b>\n"
+                f"• User: {user_mention}\n"
+                f"• Provider: <code>DIRECT_FAST</code>\n"
+                f"• Time: <code>{duration_ms}ms</code>\n"
+                f"• Original: {target_url}\n"
+                f"• Destination: {fast_res}"
+            )
+            asyncio.create_task(engine.log_to_owner(log_entry, reply_markup=build_owner_log_markup(user_id_val, target_url, fast_res)))
+
+            return {
+                "status": True,
+                "developer": DEVELOPER,
+                "response_ms": f"{duration_ms}ms",
+                "source": "direct_resolver",
+                "url": fast_res,
+                "links": {
+                    "original": target_url,
+                    "bypassed": fast_res
+                }
+            }
+    except Exception as e:
+        _trace("DIRECT", f"Pre-check direct bypass exception: {e}")
+
     if not engine.userbot or not engine.userbot_connected:
         job["state"] = JobState.FAILED
         job["error"] = "Telethon Userbot is offline. Please configure TELEGRAM_SESSION, TELEGRAM_API_ID, and TELEGRAM_API_HASH in your hosting settings (.env)."
@@ -1082,7 +1234,7 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                     f"• Original: {job['url']}\n"
                     f"• Destination: {job['final_url']}"
                 )
-                asyncio.create_task(engine.log_to_owner(log_entry))
+                asyncio.create_task(engine.log_to_owner(log_entry, reply_markup=build_owner_log_markup(user_id_val, job['url'], job['final_url'])))
 
                 return {
                     "status": True,
@@ -1105,10 +1257,53 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
 
         _trace("ENGINE", f"Primary {current_provider} did not resolve. Attempting fallback.")
 
+    # Final fallback attempt using direct unshortener / redirect extractor
+    try:
+        deep_res = await fast_direct_bypass(target_url)
+        if deep_res and is_valid_bypassed_destination(deep_res, target_url):
+            duration_ms = int((time.time() - t0) * 1000)
+            engine.total_bypasses += 1
+            engine.successful_bypasses += 1
+            job["state"] = JobState.RESULT_FOUND
+            job["final_url"] = deep_res
+            job["provider"] = "direct_resolver"
+
+            user_id_val = job.get("user_id")
+            first_name_val = job.get("first_name") or "User"
+            first_name_esc = html.escape(str(first_name_val))
+            user_mention = f'<a href="tg://user?id={user_id_val}">{first_name_esc}</a> [<code>{user_id_val}</code>]' if user_id_val else f"<code>{first_name_esc}</code>"
+            log_entry = (
+                f"✅ <b>Bypass Success (Deep Direct Resolver v4.0)</b>\n"
+                f"• User: {user_mention}\n"
+                f"• Provider: <code>DIRECT_DEEP</code>\n"
+                f"• Time: <code>{duration_ms}ms</code>\n"
+                f"• Original: {target_url}\n"
+                f"• Destination: {deep_res}"
+            )
+            asyncio.create_task(engine.log_to_owner(log_entry, reply_markup=build_owner_log_markup(user_id_val, target_url, deep_res)))
+
+            return {
+                "status": True,
+                "developer": DEVELOPER,
+                "response_ms": f"{duration_ms}ms",
+                "source": "direct_resolver",
+                "url": deep_res,
+                "links": {
+                    "original": target_url,
+                    "bypassed": deep_res
+                }
+            }
+    except Exception:
+        pass
+
     duration_ms = int((time.time() - t0) * 1000)
     engine.total_bypasses += 1
     engine.failed_bypasses += 1
     job["state"] = JobState.FAILED
+
+    clean_err = last_error_detail or "Unable to bypass this link with active providers."
+    if "unable to bypass" in clean_err.lower():
+        clean_err = "Unable to bypass this link with active providers. The shortener domain is either unsupported, expired, or requires interactive captcha."
 
     user_id_val = job.get("user_id")
     first_name_val = job.get("first_name") or "User"
@@ -1124,14 +1319,14 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
         f"• User: {user_mention}\n"
         f"• Original: {job['url']}\n"
         f"• Time: <code>{duration_ms}ms</code>\n"
-        f"• Reason: {last_error_detail or 'All providers timed out or rejected.'}"
+        f"• Reason: {clean_err}"
     )
-    asyncio.create_task(engine.log_to_owner(fail_log))
+    asyncio.create_task(engine.log_to_owner(fail_log, reply_markup=build_owner_log_markup(user_id_val, job['url'], None)))
 
     return {
         "status": False,
         "developer": DEVELOPER,
-        "message": last_error_detail or "All bypass providers failed to resolve this link.",
+        "message": clean_err,
         "response_ms": f"{duration_ms}ms"
     }
 
