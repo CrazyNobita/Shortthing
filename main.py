@@ -42,6 +42,13 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 from telethon.tl.types import MessageEntityUrl, MessageEntityTextUrl
+from telethon.errors import (
+    FloodWaitError,
+    PeerFloodError,
+    UserDeactivatedBanError,
+    AuthKeyError,
+    RPCError
+)
 
 # ══════════════════════════════════════════════════════════════
 #  ENV LOADER (.env support)
@@ -83,7 +90,7 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 # কোড থেকেই সরাসরি আপনার টেলিগ্রাম মিনি অ্যাপ লিংক বা ওয়েব ডোমেইন পেস্ট করতে পারেন:
 # উদাহরণ: "https://t.me/YourBot/app" অথবা "https://your-domain.run.app"
 # যদি ফাঁকা ("") থাকে, তবে এটি অটো-ডিটেক্ট বা হোস্টিং এনভায়রনমেন্ট ভ্যারিয়েবল (PUBLIC_URL) ব্যবহার করবে।
-MANUAL_MINI_APP_URL: str = "https://codenestauth.onrender.com/live/u13-linkzov4bot-72b452/"  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
+MANUAL_MINI_APP_URL: str = ""  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
 
 # 👥 2. DZHQ GROUP (ডিজেডএইচকিউ গ্রুপ আইডি / ইউজারনেম):
 # DZHQ Bot (@DZHQ_BypassBot) মডারদের নিয়মানুযায়ী শুধুমাত্র অনুমোদিত গ্রুপে কাজ করে (DM-এ কাজ করে না)।
@@ -577,6 +584,40 @@ async def fast_direct_bypass(target_url: str) -> Optional[str]:
 
     return None
 
+def sanitize_and_validate_outbound_link(url_str: str) -> Optional[str]:
+    """
+    Strictly validates and formats an outgoing target link before sending to Alex DM or DZHQ.
+    Guarantees that:
+    1. NEVER sends commands (/start, /help, etc.), plain text, emojis, or chat messages.
+    2. Accepts:
+       - URLs starting with http:// or https:// (with valid domain name & TLD)
+       - Bare domain links like 'example.com/shortner' or 'droplink.co/abc', which are normalized to 'https://example.com/shortner'
+    3. Rejects invalid, dangerous, empty, or non-link strings so the Telethon account stays 100% safe.
+    """
+    if not url_str or not isinstance(url_str, str):
+        return None
+    raw = url_str.strip()
+    if not raw or raw.startswith(('/', '@', '!', '.', '#', '$')):
+        return None
+
+    # 1. URLs starting with http:// or https://
+    if raw.startswith(('http://', 'https://')):
+        m = re.match(r'^https?://([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(:\d+)?(/.*)?$', raw, re.IGNORECASE)
+        if m:
+            host = m.group(1).lower()
+            if not host.startswith(('t.me', 'telegram.me', 'telegram.dog')):
+                return raw
+        return None
+
+    # 2. Bare domain links (e.g. droplink.co/xyz, example.com/shortner)
+    m_bare = re.match(r'^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(:\d+)?(/.*)?$', raw, re.IGNORECASE)
+    if m_bare:
+        host = m_bare.group(1).lower()
+        if not host.startswith(('t.me', 'telegram.me', 'telegram.dog')):
+            return f"https://{raw}"
+
+    return None
+
 # ══════════════════════════════════════════════════════════════
 #  PARSERS (DZHQ GROUP & ALEX DM)
 # ══════════════════════════════════════════════════════════════
@@ -834,11 +875,22 @@ class BypassEngine:
         self.alex_dm_queue: List[str] = []
         self.alex_queue_lock = threading.Lock()
 
+        # Telethon Anti-Flood, Rate-Limiting & Account Ban Protection
+        self.telethon_send_lock: Optional[asyncio.Lock] = None
+        self.telethon_last_send_ts: float = 0.0
+        self.telethon_floodwait_until: float = 0.0
+        self.telethon_min_interval: float = 2.5  # Safe pacing (at least 2.5s between sends) to prevent account bans
+
         # Statistics
         self.total_bypasses = 0
         self.successful_bypasses = 0
         self.failed_bypasses = 0
         self.start_time = time.time()
+
+    def get_telethon_send_lock(self) -> asyncio.Lock:
+        if self.telethon_send_lock is None:
+            self.telethon_send_lock = asyncio.Lock()
+        return self.telethon_send_lock
 
     def check_user_rate_limit(self, user_id: int) -> Tuple[bool, str]:
         with self.rate_lock:
@@ -908,6 +960,90 @@ class BypassEngine:
                 _trace("LOG", f"Failed to deliver log to owner: {e}")
 
 engine = BypassEngine()
+
+async def safe_telethon_send(
+    entity: Any,
+    message_text: str,
+    reply_to: Optional[int] = None,
+    enforce_link_safety: bool = True
+) -> Tuple[Optional[Any], Optional[str]]:
+    """
+    Safely sends a message via Telethon Userbot with:
+    1. Comprehensive FloodWaitError handling & automatic backoff.
+    2. PeerFloodError detection & cooldown.
+    3. Strict Link-Safety enforcement (NEVER sends /start, chat commands, or plain text to Alex Bot/DZHQ).
+    4. Anti-Flood Human Pacing (minimum 2.5s delay between sends) with asyncio lock.
+    Returns: (sent_message_object, error_description)
+    """
+    if not engine.userbot or not engine.userbot_connected:
+        return None, "Telethon Userbot is not connected."
+
+    # 1. Link-Safety Check if target is Alex Bot or external bypasser
+    if enforce_link_safety:
+        cleaned_link = sanitize_and_validate_outbound_link(message_text)
+        if not cleaned_link:
+            logger.warning(f"🛡️ [SAFETY SHIELD] Refused to send invalid non-link payload to userbot peer: {repr(message_text[:40])}")
+            return None, "Payload was not a valid URL (safety rule: only http/https or domain links permitted)."
+        message_text = cleaned_link
+
+    # 2. Check if global FloodWait cooldown is still active
+    now = time.time()
+    if now < engine.telethon_floodwait_until:
+        wait_left = int(engine.telethon_floodwait_until - now)
+        if wait_left > 30:
+            logger.warning(f"⚠️ [TELETHON FLOODWAIT] Active FloodWait cooldown ({wait_left}s remaining). Skipping request to protect account.")
+            return None, f"Telegram FloodWait is active ({wait_left}s remaining). Request postponed to protect userbot."
+        else:
+            _trace("SAFETY", f"Sleeping {wait_left}s for active FloodWait cooldown...")
+            await asyncio.sleep(wait_left + 1)
+
+    send_lock = engine.get_telethon_send_lock()
+    async with send_lock:
+        # Enforce minimum delay since last send to simulate natural human activity
+        time_since_last = time.time() - engine.telethon_last_send_ts
+        if time_since_last < engine.telethon_min_interval:
+            delay_needed = engine.telethon_min_interval - time_since_last
+            _trace("SAFETY", f"Pacing userbot send: sleeping {delay_needed:.2f}s...")
+            await asyncio.sleep(delay_needed)
+
+        # Attempt sending with FloodWait protection and retry
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                sent = await engine.userbot.send_message(entity, message_text, reply_to=reply_to)
+                engine.telethon_last_send_ts = time.time()
+                return sent, None
+            except FloodWaitError as e:
+                wait_sec = int(getattr(e, 'seconds', 10))
+                logger.warning(f"⚠️ [TELETHON FLOODWAIT ERROR] Telegram returned FloodWait: wait {wait_sec}s! Account protection initiated.")
+                engine.telethon_floodwait_until = time.time() + wait_sec + 2
+
+                if wait_sec <= 30 and attempt == 0:
+                    logger.info(f"⏳ Waiting {wait_sec + 2}s before safe retry...")
+                    await asyncio.sleep(wait_sec + 2)
+                    continue
+                else:
+                    return None, f"Telegram FloodWait triggered ({wait_sec}s). Operation aborted to safeguard user account."
+            except PeerFloodError as e:
+                logger.error(f"⚠️ [TELETHON PEER FLOOD] Telegram flagged peer message rate. Cooldown 120s set to prevent ban: {e}")
+                engine.telethon_floodwait_until = time.time() + 120.0
+                return None, "Telegram PeerFlood rate-limit detected. Cooldown activated to prevent account restriction."
+            except UserDeactivatedBanError as e:
+                logger.critical(f"❌ [ACCOUNT BANNED] Telethon user account was deactivated or banned by Telegram: {e}")
+                engine.userbot_connected = False
+                return None, "Userbot account is banned or deactivated by Telegram."
+            except Exception as e:
+                err_str = str(e)
+                if "FLOOD_WAIT" in err_str.upper():
+                    m = re.search(r'FLOOD_WAIT_?(\d+)', err_str, re.I)
+                    wait_sec = int(m.group(1)) if m else 15
+                    engine.telethon_floodwait_until = time.time() + wait_sec + 2
+                    logger.warning(f"⚠️ [FLOOD_WAIT DETECTED] Wait {wait_sec}s recorded.")
+                    return None, f"Telegram FloodWait active ({wait_sec}s)."
+                logger.error(f"❌ Userbot send_message failed: {e}")
+                return None, f"Userbot send error: {e}"
+
+    return None, "Failed to send message after retries."
 
 # ══════════════════════════════════════════════════════════════
 #  USERBOT TELEGRAM HANDLERS (DZHQ GROUP/DM + ALEX DM)
@@ -1180,21 +1316,39 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                     _trace("ENGINE", "Skipping DZHQ: group not configured. DZHQ bot modders require an authorized group.")
                     last_error_detail = "DZHQ bot requires an authorized Telegram group (modder restriction). Set MANUAL_DZHQ_GROUP in bot.py."
                     continue
-                try:
-                    sent = await engine.userbot.send_message(group_target, f"/b {target_url}")
-                    job["dzhq_sent_id"] = sent.id
-                    _trace("ENGINE", f"Sent /b {target_url} to DZHQ group (msg id {sent.id})")
-                except Exception as e:
-                    _trace("ENGINE", f"DZHQ group send failed: {e}")
-                    last_error_detail = f"Could not send to DZHQ group: {e}"
+
+                clean_target = sanitize_and_validate_outbound_link(target_url)
+                if not clean_target:
+                    last_error_detail = "Invalid target URL format (only valid web/domain links allowed)."
                     continue
 
+                sent, send_err = await safe_telethon_send(group_target, f"/b {clean_target}", enforce_link_safety=False)
+                if not sent or send_err:
+                    _trace("ENGINE", f"DZHQ group send failed: {send_err}")
+                    last_error_detail = f"Could not send to DZHQ group: {send_err}"
+                    continue
+                job["dzhq_sent_id"] = sent.id
+                _trace("ENGINE", f"Sent /b {clean_target} to DZHQ group (msg id {sent.id})")
+
             elif current_provider == "alex_dm":
+                clean_target = sanitize_and_validate_outbound_link(target_url)
+                if not clean_target:
+                    last_error_detail = "Invalid target URL format. Alex Bypass Bot strictly accepts links starting with http://, https://, or domain/path."
+                    continue
+
                 with engine.alex_queue_lock:
                     engine.alex_dm_queue.append(job_id)
-                sent = await engine.userbot.send_message(ALEX_BOT, target_url)
+
+                sent, send_err = await safe_telethon_send(ALEX_BOT, clean_target, enforce_link_safety=True)
+                if not sent or send_err:
+                    with engine.alex_queue_lock:
+                        if engine.alex_dm_queue and engine.alex_dm_queue[0] == job_id:
+                            engine.alex_dm_queue.pop(0)
+                    _trace("ENGINE", f"Alex DM send failed: {send_err}")
+                    last_error_detail = f"Could not send to {ALEX_BOT}: {send_err}"
+                    continue
                 job["alex_sent_id"] = sent.id
-                _trace("ENGINE", f"Sent {target_url} to {ALEX_BOT} in DM (msg id {sent.id})")
+                _trace("ENGINE", f"Sent {clean_target} to {ALEX_BOT} in DM (msg id {sent.id})")
 
             provider_timeout = ALEX_DM_TIMEOUT_SEC if current_provider == "alex_dm" else BYPASS_IDLE_TIMEOUT_SEC
             while time.time() - t0 < MAX_BYPASS_TIMEOUT_SEC:
@@ -2647,13 +2801,8 @@ async def main_async():
                 except Exception as e:
                     logger.warning(f"⚠️ Could not resolve {ALEX_BOT}: {e}")
 
-                # Auto-prime dialog with Alex DM
-                if ALEX_BOT:
-                    try:
-                        await userbot.send_message(ALEX_BOT, "/start")
-                        logger.info(f"✅ Userbot initiated chat with {ALEX_BOT}")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not send /start to {ALEX_BOT}: {e}")
+                # Note: /start is NEVER sent to Alex DM or external bots to protect the Telethon userbot account from bans
+                logger.info(f"🛡️ Userbot initialized safely for {ALEX_BOT} (only valid URLs will be forwarded on demand)")
 
                 setup_userbot_handlers(userbot)
                 me = await userbot.get_me()
