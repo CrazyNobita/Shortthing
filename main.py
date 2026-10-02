@@ -90,7 +90,7 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 # কোড থেকেই সরাসরি আপনার টেলিগ্রাম মিনি অ্যাপ লিংক বা ওয়েব ডোমেইন পেস্ট করতে পারেন:
 # উদাহরণ: "https://t.me/YourBot/app" অথবা "https://your-domain.run.app"
 # যদি ফাঁকা ("") থাকে, তবে এটি অটো-ডিটেক্ট বা হোস্টিং এনভায়রনমেন্ট ভ্যারিয়েবল (PUBLIC_URL) ব্যবহার করবে।
-MANUAL_MINI_APP_URL: str = ""  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
+MANUAL_MINI_APP_URL: str = "https://codenestauth2.onrender.com/live/u13-linkzov4bot-987d39"  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
 
 # 👥 2. DZHQ GROUP (ডিজেডএইচকিউ গ্রুপ আইডি / ইউজারনেম):
 # DZHQ Bot (@DZHQ_BypassBot) মডারদের নিয়মানুযায়ী শুধুমাত্র অনুমোদিত গ্রুপে কাজ করে (DM-এ কাজ করে না)।
@@ -137,7 +137,7 @@ TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBuxr60UxlUBk2Zum8
 DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
 
 # DZHQ Group Priority: MANUAL_DZHQ_GROUP (Code) -> DZHQ_GROUP (Environment Variable)
-_raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "").strip()
+_raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "-1003644908415").strip()
 if _raw_dzhq_grp:
     try:
         DZHQ_GROUP: Optional[Union[int, str]] = int(str(_raw_dzhq_grp).strip())
