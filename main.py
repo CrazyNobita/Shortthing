@@ -105,6 +105,14 @@ MANUAL_START_IMAGE_URL: str = "https://api.aniwallpaper.workers.dev/random?type=
 # 👑 4. OWNER ID (বট ওনার আইডি):
 MANUAL_OWNER_ID: Union[int, str, None] = 7931847651  # 👈 YOUR TELEGRAM ID HERE (e.g. 7931847651)
 
+# 🤖 5. ALEX BOT USERNAME (অ্যালেক্স বাইপাস বটের ইউজারনেম):
+# ডিফল্ট: "@alexbypassbot" (অথবা আপনার কাঙ্ক্ষিত বটের ইউজারনেম যেমন: "@AlexBypassBot")
+MANUAL_ALEX_BOT: str = "@alexbypassbot"  # 👈 PASTE ALEX BOT USERNAME HERE!
+
+# 🤖 6. DZHQ BOT USERNAME (ডিজেডএইচকিউ বটের ইউজারনেম):
+# ডিফল্ট: "@DZHQ_BypassBot"
+MANUAL_DZHQ_BOT: str = "@DZHQ_BypassBot"  # 👈 PASTE DZHQ BOT USERNAME HERE!
+
 # ══════════════════════════════════════════════════════════════
 #  SYSTEM CONFIGURATION & CREDENTIALS
 # ══════════════════════════════════════════════════════════════
@@ -132,8 +140,8 @@ TELEGRAM_API_ID = int(TELEGRAM_API_ID_RAW) if TELEGRAM_API_ID_RAW.isdigit() else
 TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
 TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION", "1BVtsOIEBu03moBzbxTbtDzq_9Ob0HWSVGAgesXEpzanbRk_GwC02S5uMZ5WHcFGm10VbStJD4pDmXfrq4uXHLtdCVdHtizC6omlJL5E95GCzaYY4bwlnlBqmdKSp9X9Wh4IVV5ce0-roJBz2noQAGCGSJOlGmOK7lJHdQjjomt9aQA5svUE6MvPdU4ZU0mdi892pDPbk0YXq57oc8xHMv1fmuaGBILo5vBQ0lQzqHKTVEY9ky_7xKBDn5tnnSoo0aNexr8mxwMmfo-aTZ7nIACqu_avEWR15tt2LOqMvSjLXt5PBF3Th-zZtgeP8MwXsF_6vpVnLI2iPFAtT85QQE1Fotxw838w=").strip()
 
-# External Bypass Bots (Supports DZHQ Group & Alex DM)
-DZHQ_BOT = os.environ.get("DZHQ_BOT_USERNAME", "@DZHQ_BypassBot").strip()
+# External Bypass Bots (Supports DZHQ Group/DM & Alex DM)
+DZHQ_BOT = (os.environ.get("DZHQ_BOT_USERNAME") or MANUAL_DZHQ_BOT or "@DZHQ_BypassBot").strip()
 
 # DZHQ Group Priority: MANUAL_DZHQ_GROUP (Code) -> DZHQ_GROUP (Environment Variable)
 _raw_dzhq_grp = MANUAL_DZHQ_GROUP if MANUAL_DZHQ_GROUP is not None and str(MANUAL_DZHQ_GROUP).strip() else os.environ.get("DZHQ_GROUP", "-1003644908415").strip()
@@ -145,7 +153,7 @@ if _raw_dzhq_grp:
 else:
     DZHQ_GROUP = None
 
-ALEX_BOT = os.environ.get("ALEX_BOT_USERNAME", "@alexbypassbot").strip()
+ALEX_BOT = (os.environ.get("ALEX_BOT_USERNAME") or MANUAL_ALEX_BOT or "@alexbypassbot").strip()
 
 # Web Server & Port Configuration
 PORT = int(os.environ.get("PORT", "5000"))
@@ -248,17 +256,18 @@ def get_cloudflared_path() -> Optional[str]:
         logger.warning(f"⚠️ Could not auto-download cloudflared: {e}")
         return None
 
-def start_auto_tunnel(port: int) -> Optional[str]:
+def start_auto_tunnel(port: int, force: bool = False) -> Optional[str]:
     """
     Start cloudflared quick tunnel to expose Flask (serving index.html and /bypass)
     to a real public HTTPS URL without user needing to enter or host a manual Mini App link.
     """
     global _TUNNEL_PROC, _CURRENT_PUBLIC_URL, _TUNNEL_SUPERVISOR_ACTIVE, _TUNNEL_FAIL_COUNT
-    if _CURRENT_PUBLIC_URL and _CURRENT_PUBLIC_URL.startswith("https://") and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
-        return _CURRENT_PUBLIC_URL
+    if not force and _TUNNEL_PROC and _TUNNEL_PROC.poll() is None and _CURRENT_PUBLIC_URL:
+        if _CURRENT_PUBLIC_URL.startswith("https://") and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
+            return _CURRENT_PUBLIC_URL
 
     if _TUNNEL_FAIL_COUNT >= 3:
-        logger.info("ℹ️ Cloudflare tunnel disabled after repeated exit errors. Relying on platform web host.")
+        logger.info("ℹ️ Cloudflare tunnel disabled after retry limit reached. Relying on platform web host.")
         return None
 
     cf_bin = get_cloudflared_path()
@@ -275,8 +284,8 @@ def start_auto_tunnel(port: int) -> Optional[str]:
             pass
 
     try:
-        # Use --protocol http2 to avoid UDP/QUIC blockages on cloud container networks
-        cmd = [cf_bin, "tunnel", "--protocol", "http2", "--url", f"http://127.0.0.1:{port}"]
+        # Use --no-autoupdate and --protocol http2 for maximum reliability in containers
+        cmd = [cf_bin, "tunnel", "--no-autoupdate", "--protocol", "http2", "--url", f"http://127.0.0.1:{port}"]
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -325,6 +334,10 @@ def start_auto_tunnel(port: int) -> Optional[str]:
                     ret = cur_proc.wait()
                     logger.info(f"ℹ️ Cloudflare tunnel process exited with code {ret}")
 
+                    # Invalidate old dead tunnel URL
+                    if _CURRENT_PUBLIC_URL and "trycloudflare.com" in _CURRENT_PUBLIC_URL:
+                        _CURRENT_PUBLIC_URL = None
+
                     _TUNNEL_FAIL_COUNT += 1
                     if _TUNNEL_FAIL_COUNT >= 3:
                         logger.warning(
@@ -334,12 +347,12 @@ def start_auto_tunnel(port: int) -> Optional[str]:
                         _TUNNEL_SUPERVISOR_ACTIVE = False
                         break
 
-                    backoff = min(30, 6 * _TUNNEL_FAIL_COUNT)
+                    backoff = min(30, 8 * _TUNNEL_FAIL_COUNT)
                     logger.warning(f"🔄 Cloudflare tunnel exited. Backing off for {backoff}s before retry ({_TUNNEL_FAIL_COUNT}/3)...")
                     time.sleep(backoff)
 
                     with _TUNNEL_LOCK:
-                        start_auto_tunnel(port)
+                        start_auto_tunnel(port, force=True)
                         if _TUNNEL_PROC and _TUNNEL_PROC.poll() is None:
                             continue
                         else:
@@ -567,17 +580,22 @@ def is_valid_bypassed_destination(url: str, original_url: str) -> bool:
 
         # 3. Reject provider promo websites and intermediate shortener ad gates
         ad_indicators = (
-            "dzhq", "alexmodz", "adlinkfly", "thetechhint", "shortx",
-            "adfly", "shrinkme", "gplinks", "droplink", "linkvertise",
-            "ouo.io", "ouo.press", "shareus", "rocklinks", "urlking",
-            "shortner", "shorturl"
+            "dzhq", "alexmodz", "adlinkfly", "linkfly", "thetechhint", "techhint",
+            "shortxlinks", "shortx", "adfly", "shrinkme", "gplinks", "droplink",
+            "linkvertise", "ouo.io", "ouo.press", "shareus", "rocklinks", "urlking",
+            "shortner", "shorturl", "dulink", "ez4short", "tnlink", "clicksfly",
+            "v2links", "fastlinks", "tinyurl.com", "bit.ly", "cutt.ly", "adclick",
+            "linkdrop", "shrinkearn", "shorten"
         )
         if any(ad in host for ad in ad_indicators):
             return False
 
-        # 4. Reject intermediate query strings from shortener ad scripts
+        # 4. Reject intermediate query strings from shortener ad scripts & token handshakes
         query_lower = (parsed.query or "").lower()
-        if any(q in query_lower for q in ("adlinkfly=", "adfly=", "countdown=", "?token=", "&token=", "adlink=")):
+        if any(q in query_lower for q in (
+            "adlinkfly", "adfly", "countdown", "token=", "adlink=",
+            "sub2", "unlock=", "verify=", "st=", "?token", "&token"
+        )):
             return False
 
         return True
@@ -1160,7 +1178,14 @@ async def safe_telethon_send(
                     logger.info("🔄 Re-establishing MTProto socket connection...")
                     await engine.userbot.connect()
 
-                sent = await engine.userbot.send_message(entity, message_text, reply_to=reply_to)
+                target_peer = entity
+                if isinstance(entity, (str, int)):
+                    try:
+                        target_peer = await engine.userbot.get_entity(entity)
+                    except Exception as res_err:
+                        logger.warning(f"⚠️ Could not resolve target entity {entity}: {res_err}")
+
+                sent = await engine.userbot.send_message(target_peer, message_text, reply_to=reply_to)
                 engine.telethon_last_send_ts = time.time()
                 return sent, None
             except FloodWaitError as e:
@@ -1407,25 +1432,17 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
             "response_ms": "0ms"
         }
 
-    # Provider Selection & Modder Policy:
-    # DZHQ Bot (@DZHQ_BypassBot) only operates in authorized groups (modder restriction, DM is disabled).
-    has_dzhq_group = bool(engine.dzhq_group_entity or DZHQ_GROUP)
+    # Provider Selection:
     is_alex_favored = any(k in target_url.lower() for k in ("urlking", "monteolympus", "alex", "shortx", "thetechhint", "adlinkfly", "droplink", "gplinks", "linkvertise"))
 
-    if not has_dzhq_group:
-        # Without an authorized group, DZHQ cannot be used (modders allow only group execution).
-        # Fall back directly to Alex DM without wasting timeout on DZHQ.
-        _trace("ENGINE", "DZHQ group is not configured (DZHQ bot modders require authorized group). Using Alex DM.")
-        primary_provider = "alex_dm"
-        fallback_provider = None
-    elif is_alex_favored:
+    if is_alex_favored:
         primary_provider = "alex_dm"
         fallback_provider = "dzhq"
     else:
         primary_provider = "dzhq"
         fallback_provider = "alex_dm"
 
-    providers_to_try = [p for p in (primary_provider, fallback_provider) if p]
+    providers_to_try = [primary_provider, fallback_provider]
     last_error_detail = None
 
     for current_provider in providers_to_try:
@@ -1438,24 +1455,35 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
 
         try:
             if current_provider == "dzhq":
-                group_target = engine.dzhq_group_entity if engine.dzhq_group_entity else DZHQ_GROUP
-                if not group_target:
-                    _trace("ENGINE", "Skipping DZHQ: group not configured.")
-                    last_error_detail = "Bypass Engine 2 is currently unavailable (requires authorized group setup)."
-                    continue
-
                 clean_target = sanitize_and_validate_outbound_link(target_url)
                 if not clean_target:
                     last_error_detail = "Invalid target URL format (only valid web/domain links allowed)."
                     continue
 
-                sent, send_err = await safe_telethon_send(group_target, f"/b {clean_target}", enforce_link_safety=False)
+                sent = None
+                send_err = None
+                group_target = engine.dzhq_group_entity if engine.dzhq_group_entity else DZHQ_GROUP
+                
+                # 1. Try DZHQ Group if configured
+                if group_target:
+                    sent, send_err = await safe_telethon_send(group_target, f"/b {clean_target}", enforce_link_safety=False)
+                    if sent:
+                        job["dzhq_sent_id"] = sent.id
+                        _trace("ENGINE", f"Sent /b {clean_target} to engine group (msg id {sent.id})")
+
+                # 2. If group was not configured or send failed, try direct DM with DZHQ Bot
+                if not sent:
+                    dzhq_dm_target = engine.dzhq_bot_id if engine.dzhq_bot_id else DZHQ_BOT
+                    sent, send_err = await safe_telethon_send(dzhq_dm_target, f"/b {clean_target}", enforce_link_safety=False)
+                    if sent:
+                        job["dzhq_sent_id"] = sent.id
+                        _trace("ENGINE", f"Sent /b {clean_target} to DZHQ bot in direct DM (msg id {sent.id})")
+
                 if not sent or send_err:
-                    _trace("ENGINE", f"DZHQ group send failed: {send_err}")
-                    last_error_detail = f"Could not send to Bypass Engine: {sanitize_engine_names(send_err)}"
+                    _trace("ENGINE", f"DZHQ send failed: {send_err}")
+                    logger.warning(f"⚠️ DZHQ send failed for job {job_id}: {send_err}")
+                    last_error_detail = f"Could not send to Bypass Engine: {sanitize_engine_names(send_err or 'DZHQ unavailable')}"
                     continue
-                job["dzhq_sent_id"] = sent.id
-                _trace("ENGINE", f"Sent /b {clean_target} to engine group (msg id {sent.id})")
 
             elif current_provider == "alex_dm":
                 clean_target = sanitize_and_validate_outbound_link(target_url)
@@ -1466,14 +1494,25 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                 with engine.alex_queue_lock:
                     engine.alex_dm_queue.append(job_id)
 
-                alex_target = engine.alex_entity if engine.alex_entity else ALEX_BOT
+                alex_target = engine.alex_entity if engine.alex_entity else (engine.alex_bot_id or ALEX_BOT)
                 sent, send_err = await safe_telethon_send(alex_target, clean_target, enforce_link_safety=True)
+
+                # Fallback to known Alex bot aliases if first try failed
+                if not sent and not engine.alex_entity:
+                    for alias in ("@alexbypassbot", "@AlexBypassBot", "@BypassAlexBot", "@alex_bypass_bot"):
+                        if alias != str(alex_target):
+                            sent, send_err = await safe_telethon_send(alias, clean_target, enforce_link_safety=True)
+                            if sent:
+                                ALEX_BOT = alias
+                                break
+
                 if not sent or send_err:
                     with engine.alex_queue_lock:
                         if engine.alex_dm_queue and engine.alex_dm_queue[0] == job_id:
                             engine.alex_dm_queue.pop(0)
                     _trace("ENGINE", f"Alex DM send failed: {send_err}")
-                    last_error_detail = f"Could not send to Bypass Engine: {sanitize_engine_names(send_err)}"
+                    logger.warning(f"⚠️ Alex DM send failed for job {job_id}: {send_err}")
+                    last_error_detail = f"Could not send to Bypass Engine: {sanitize_engine_names(send_err or 'Alex Bot unavailable')}"
                     continue
                 job["alex_sent_id"] = sent.id
                 _trace("ENGINE", f"Sent {clean_target} to Bypass Engine (msg id {sent.id})")
@@ -2798,12 +2837,16 @@ class PrefixMiddleware:
 
     def __call__(self, environ, start_response):
         path = environ.get('PATH_INFO', '')
-        m = re.match(r'^(/live/[^/]+)(/.*)?$', path)
-        if m:
-            prefix = m.group(1)
-            sub = m.group(2) or '/'
-            environ['PATH_INFO'] = sub
-            environ['SCRIPT_NAME'] = prefix
+        fwd_prefix = environ.get('HTTP_X_FORWARDED_PREFIX', '')
+        if fwd_prefix:
+            environ['SCRIPT_NAME'] = fwd_prefix.rstrip('/')
+        else:
+            m = re.match(r'^(/live/[^/]+)(/.*)?$', path)
+            if m:
+                prefix = m.group(1)
+                sub = m.group(2) or '/'
+                environ['PATH_INFO'] = sub
+                environ['SCRIPT_NAME'] = prefix
         return self.wsgi_app(environ, start_response)
 
 app.wsgi_app = PrefixMiddleware(app.wsgi_app)
@@ -2937,30 +2980,60 @@ async def main_async():
                 engine.userbot = userbot
                 engine.userbot_connected = True
 
-                # Resolve engine 2 group entity if explicitly configured
+                # 1. Resolve DZHQ Group entity if configured
                 if DZHQ_GROUP:
                     try:
                         engine.dzhq_group_entity = await userbot.get_entity(DZHQ_GROUP)
                         logger.info(f"✅ Bypass Engine 2 Group resolved: {getattr(engine.dzhq_group_entity, 'title', DZHQ_GROUP)}")
                     except Exception as e:
                         logger.warning(f"⚠️ Could not resolve Engine 2 Group ({DZHQ_GROUP}): {e}")
-                else:
-                    logger.info("ℹ️ Engine 2 Group is not configured. Engine 1 will handle bypasses directly.")
 
-                try:
-                    d_ent = await userbot.get_entity(DZHQ_BOT)
-                    engine.dzhq_bot_id = d_ent.id
-                    logger.info("✅ Bypass Engine 2 Bot resolved")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not resolve Engine 2 Bot: {e}")
+                # 2. Resolve DZHQ Bot entity
+                for d_cand in (DZHQ_BOT, "@DZHQ_BypassBot", "@dzhq_bypassbot", "@DZHQBypassBot"):
+                    try:
+                        d_ent = await userbot.get_entity(d_cand)
+                        engine.dzhq_bot_id = d_ent.id
+                        logger.info(f"✅ Bypass Engine 2 Bot resolved: {d_cand}")
+                        break
+                    except Exception:
+                        continue
 
+                # 3. Resolve Alex Bot entity with aliases
+                for a_cand in (ALEX_BOT, "@alexbypassbot", "@AlexBypassBot", "@BypassAlexBot", "@alex_bypass_bot"):
+                    try:
+                        a_ent = await userbot.get_entity(a_cand)
+                        engine.alex_entity = a_ent
+                        engine.alex_bot_id = a_ent.id
+                        logger.info(f"✅ Bypass Engine 1 resolved: {a_cand}")
+                        break
+                    except Exception:
+                        continue
+
+                # 4. Auto-scan recent dialogs to discover active bypass bots and groups
                 try:
-                    a_ent = await userbot.get_entity(ALEX_BOT)
-                    engine.alex_entity = a_ent
-                    engine.alex_bot_id = a_ent.id
-                    logger.info("✅ Bypass Engine 1 resolved")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not resolve Engine 1: {e}")
+                    async for dialog in userbot.iter_dialogs(limit=50):
+                        ent = dialog.entity
+                        uname = (getattr(ent, 'username', '') or '').lower()
+                        title = (getattr(dialog, 'name', '') or '').lower()
+                        is_bot = getattr(ent, 'bot', False)
+
+                        # Auto-detect Alex Bot if not already resolved
+                        if not engine.alex_entity and is_bot and any(k in uname or k in title for k in ('alex', 'alexbypass')):
+                            engine.alex_entity = ent
+                            engine.alex_bot_id = ent.id
+                            logger.info(f"🔍 Auto-discovered Alex Bot from dialogs: {dialog.name} (@{uname or ent.id})")
+
+                        # Auto-detect DZHQ Bot if not already resolved
+                        if not engine.dzhq_bot_id and is_bot and 'dzhq' in (uname + title):
+                            engine.dzhq_bot_id = ent.id
+                            logger.info(f"🔍 Auto-discovered DZHQ Bot from dialogs: {dialog.name} (@{uname or ent.id})")
+
+                        # Auto-detect DZHQ Group if not already resolved
+                        if not engine.dzhq_group_entity and (dialog.is_group or dialog.is_channel) and any(k in title or k in uname for k in ('dzhq', 'bypass')):
+                            engine.dzhq_group_entity = ent
+                            logger.info(f"🔍 Auto-discovered DZHQ Group from dialogs: {dialog.name}")
+                except Exception as scan_err:
+                    logger.warning(f"⚠️ Dialog discovery notice: {scan_err}")
 
                 # Note: /start is NEVER sent to external bots to protect the Telethon userbot account from bans
                 logger.info("🛡️ Userbot initialized safely (only valid URLs will be forwarded on demand)")
