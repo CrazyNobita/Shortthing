@@ -120,7 +120,7 @@ _raw_owner = MANUAL_OWNER_ID if MANUAL_OWNER_ID is not None and str(MANUAL_OWNER
 OWNER_ID = int(_raw_owner) if str(_raw_owner).isdigit() else 7931847651
 
 # Start Message Image Priority: MANUAL_START_IMAGE_URL -> START_IMAGE_URL (env var)
-START_IMAGE_URL: str = (MANUAL_START_IMAGE_URL or os.environ.get("START_IMAGE_URL", "")).strip()
+START_IMAGE_URL: str = (MANUAL_START_IMAGE_URL or os.environ.get("START_IMAGE_URL", "https://api.aniwallpaper.workers.dev/random?type=girl")).strip()
 
 bot_api: Optional[Any] = None
 
