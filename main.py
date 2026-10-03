@@ -88,8 +88,8 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 # 🚀 1. MINI APP URL (মিনি অ্যাপ লিংক):
 # কোড থেকেই সরাসরি আপনার টেলিগ্রাম মিনি অ্যাপ লিংক বা ওয়েব ডোমেইন পেস্ট করতে পারেন:
 # উদাহরণ: "https://t.me/YourBot/app" অথবা "https://your-domain.run.app"
-# যদি ফাঁকা ("") থাকে, তবে এটি অটো-ডিটেক্ট বা হোস্টিং এনভায়রনমেন্ট ভ্যারিয়েবল (PUBLIC_URL) ব্যবহার করবে।
-MANUAL_MINI_APP_URL: str = ""  # 👈 PASTE YOUR MINI APP LINK HERE MANUALLY!
+# ফাঁকা ("") রাখলে এটি স্বয়ংক্রিয়ভাবে Cloudflare Quick Tunnel (trycloudflare.com) তৈরি করে নিবে!
+MANUAL_MINI_APP_URL: str = ""  # 👈 Keep empty ("") to auto-use Cloudflare Quick Tunnel!
 
 # 👥 2. DZHQ GROUP (ডিজেডএইচকিউ গ্রুপ আইডি / ইউজারনেম):
 # DZHQ Bot (@DZHQ_BypassBot) মডারদের নিয়মানুযায়ী শুধুমাত্র অনুমোদিত গ্রুপে কাজ করে (DM-এ কাজ করে না)।
@@ -199,14 +199,49 @@ def get_cloudflared_path() -> Optional[str]:
 
     try:
         logger.info(f"🌐 Auto-downloading Cloudflare Quick Tunnel binary for {system}-{machine}...")
-        try:
-            urllib.request.urlretrieve(download_url, local_path)
-            os.chmod(local_path, os.stat(local_path).st_mode | stat.S_IEXEC | stat.S_IRUSR)
-            return local_path
-        except Exception:
-            urllib.request.urlretrieve(download_url, tmp_path)
-            os.chmod(tmp_path, os.stat(tmp_path).st_mode | stat.S_IEXEC | stat.S_IRUSR)
-            return tmp_path
+        for target in (local_path, tmp_path):
+            try:
+                target_dir = os.path.dirname(target)
+                if target_dir:
+                    os.makedirs(target_dir, exist_ok=True)
+                # 1. Use system curl if available (avoids Python SSL malloc crashes on low-RAM containers)
+                if shutil.which("curl"):
+                    ret = subprocess.run(
+                        ["curl", "-fSL", "--retry", "2", "--connect-timeout", "10", "-o", target, download_url],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=60
+                    )
+                    if ret.returncode == 0 and os.path.exists(target) and os.path.getsize(target) > 5_000_000:
+                        os.chmod(target, os.stat(target).st_mode | stat.S_IEXEC | stat.S_IRUSR)
+                        return target
+
+                # 2. Use system wget if available
+                if shutil.which("wget"):
+                    ret = subprocess.run(
+                        ["wget", "-q", "--timeout=15", "-O", target, download_url],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=60
+                    )
+                    if ret.returncode == 0 and os.path.exists(target) and os.path.getsize(target) > 5_000_000:
+                        os.chmod(target, os.stat(target).st_mode | stat.S_IEXEC | stat.S_IRUSR)
+                        return target
+
+                # 3. Streamed chunk download in small 64KB buffers to avoid Python SSL memory allocations
+                req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=30) as resp, open(target, "wb") as out_f:
+                    while True:
+                        chunk = resp.read(64 * 1024)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                if os.path.exists(target) and os.path.getsize(target) > 5_000_000:
+                    os.chmod(target, os.stat(target).st_mode | stat.S_IEXEC | stat.S_IRUSR)
+                    return target
+            except Exception:
+                continue
+        return None
     except Exception as e:
         logger.warning(f"⚠️ Could not auto-download cloudflared: {e}")
         return None
@@ -288,43 +323,38 @@ def get_auto_public_url() -> str:
         _CURRENT_PUBLIC_URL = url
         return url
 
-    # 2. Existing valid public HTTPS tunnel / detected URL
+    # 2. Existing valid public HTTPS tunnel / detected URL (e.g. trycloudflare.com)
     if _CURRENT_PUBLIC_URL and not _CURRENT_PUBLIC_URL.startswith("http://localhost") and not _CURRENT_PUBLIC_URL.startswith("http://127.0.0.1"):
         return _CURRENT_PUBLIC_URL
 
-    # 3. Environment variables for Mini App / Web App
-    for env_key in ("MINI_APP_URL", "WEBAPP_URL", "PUBLIC_URL", "APP_URL"):
+    # 3. Explicit tunnel / mini app environment variables
+    for env_key in ("TUNNEL_URL", "CLOUDFLARE_URL", "MINI_APP_URL", "WEBAPP_URL"):
         env_val = os.environ.get(env_key, "").strip().rstrip("/")
         if env_val and not env_val.startswith("http://localhost") and not env_val.startswith("http://127.0.0.1"):
             _CURRENT_PUBLIC_URL = env_val
             return _CURRENT_PUBLIC_URL
 
-    render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
-    if render_url:
-        _CURRENT_PUBLIC_URL = render_url
-        return _CURRENT_PUBLIC_URL
-
-    railway_url = os.environ.get("RAILWAY_STATIC_URL", "").strip().rstrip("/") or os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
-    if railway_url:
-        if not railway_url.startswith("http"):
-            railway_url = f"https://{railway_url}"
-        _CURRENT_PUBLIC_URL = railway_url
-        return _CURRENT_PUBLIC_URL
-
-    koyeb_url = os.environ.get("KOYEB_PUBLIC_DOMAIN", "").strip().rstrip("/")
-    if koyeb_url:
-        if not koyeb_url.startswith("http"):
-            koyeb_url = f"https://{koyeb_url}"
-        _CURRENT_PUBLIC_URL = koyeb_url
-        return _CURRENT_PUBLIC_URL
-
-    # 4. Auto create a real public HTTPS URL via Cloudflare Tunnel so user doesn't need to manually configure anything
+    # 4. Primary Choice: Auto-create real public HTTPS URL via Cloudflare Quick Tunnel (trycloudflare.com)
     with _TUNNEL_LOCK:
         if not _CURRENT_PUBLIC_URL or _CURRENT_PUBLIC_URL.startswith("http://localhost") or _CURRENT_PUBLIC_URL.startswith("http://127.0.0.1"):
             tunnel_url = start_auto_tunnel(PORT)
             if tunnel_url:
                 _CURRENT_PUBLIC_URL = tunnel_url
                 return _CURRENT_PUBLIC_URL
+
+    # 5. Fallback only if Cloudflare is unreachable: check platform env vars
+    for k, v in os.environ.items():
+        if isinstance(v, str) and (("/live/" in v and v.startswith("http")) or "trycloudflare.com" in v):
+            _CURRENT_PUBLIC_URL = v.strip().rstrip("/")
+            return _CURRENT_PUBLIC_URL
+
+    for env_key in ("PUBLIC_URL", "APP_URL", "CODENEST_PUBLIC_URL", "LIVE_URL"):
+        env_val = os.environ.get(env_key, "").strip().rstrip("/")
+        if env_val and not env_val.startswith("http://localhost") and not env_val.startswith("http://127.0.0.1"):
+            if "codenest" in env_val.lower() and "/live/" not in env_val:
+                continue
+            _CURRENT_PUBLIC_URL = env_val
+            return _CURRENT_PUBLIC_URL
 
     return f"http://localhost:{PORT}"
 
@@ -1985,11 +2015,13 @@ def get_start_buttons(user_id: Optional[int] = None) -> InlineKeyboardMarkup:
     is_owner = bool(user_id and OWNER_ID and user_id == OWNER_ID)
     app_url = public_url
     if app_url and not app_url.startswith("http://localhost"):
-        sep = "&" if "?" in app_url else "?"
+        base_clean = app_url.rstrip("/") + "/"
         if is_owner:
-            app_url = f"{app_url}{sep}owner=true&uid={user_id}"
+            app_url = f"{base_clean}?owner=true&uid={user_id}"
         elif user_id:
-            app_url = f"{app_url}{sep}uid={user_id}"
+            app_url = f"{base_clean}?uid={user_id}"
+        else:
+            app_url = base_clean
 
     # Mini App Button (always present with start message)
     is_tme_link = bool(public_url and ("t.me/" in public_url or "telegram.me/" in public_url))
@@ -2748,6 +2780,23 @@ async def run_bot_polling():
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
+class PrefixMiddleware:
+    """Handles reverse-proxy subpath deployments like /live/u13-linkzov4bot-f70430/..."""
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        path = environ.get('PATH_INFO', '')
+        m = re.match(r'^(/live/[^/]+)(/.*)?$', path)
+        if m:
+            prefix = m.group(1)
+            sub = m.group(2) or '/'
+            environ['PATH_INFO'] = sub
+            environ['SCRIPT_NAME'] = prefix
+        return self.wsgi_app(environ, start_response)
+
+app.wsgi_app = PrefixMiddleware(app.wsgi_app)
+
 GLOBAL_ASYNC_LOOP: Optional[asyncio.AbstractEventLoop] = None
 
 @app.before_request
@@ -2757,10 +2806,14 @@ def auto_detect_host_url():
         proto = request.headers.get("X-Forwarded-Proto") or ("https" if request.is_secure else "http")
         host = request.headers.get("X-Forwarded-Host") or request.host
         if host and not host.startswith("localhost") and not host.startswith("127.0.0.1"):
-            _CURRENT_PUBLIC_URL = f"{proto}://{host}".rstrip("/")
+            if "codenest" in host.lower() and not request.script_root:
+                pass
+            else:
+                prefix = request.script_root or ""
+                _CURRENT_PUBLIC_URL = f"{proto}://{host}{prefix}".rstrip("/")
         elif request.host_url:
             detected = request.host_url.rstrip("/")
-            if not detected.startswith("http://localhost"):
+            if not detected.startswith("http://localhost") and "codenest" not in detected.lower():
                 _CURRENT_PUBLIC_URL = detected
 
 @app.route("/", methods=["GET"])
@@ -2937,8 +2990,12 @@ async def main_async():
     else:
         logger.warning("⚠️ Telethon Userbot credentials missing in .env (API_ID, API_HASH, or TELEGRAM_SESSION).")
 
-    # 2. Start Cloudflare Tunnel for HTML Mini App in background if needed
-    threading.Thread(target=lambda: start_auto_tunnel(PORT), daemon=True, name="BootCloudflared").start()
+    # 2. Start Cloudflare Tunnel for HTML Mini App and wait for instant HTTPS URL
+    loop = asyncio.get_running_loop()
+    try:
+        await asyncio.wait_for(loop.run_in_executor(None, lambda: start_auto_tunnel(PORT)), timeout=8.0)
+    except Exception:
+        pass
 
     # 3. Launch Telegram Bot Polling (with Real Colored Buttons)
     polling_task = asyncio.create_task(run_bot_polling())
