@@ -40,7 +40,6 @@ import aiohttp
 from flask import Flask, request, jsonify, send_file
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 from telethon.tl.types import MessageEntityUrl, MessageEntityTextUrl
 from telethon.errors import (
     FloodWaitError,
@@ -213,13 +212,17 @@ def get_cloudflared_path() -> Optional[str]:
         return None
 
 def start_auto_tunnel(port: int) -> Optional[str]:
-    """Start cloudflared tunnel to expose local port to a real public HTTPS URL."""
+    """
+    Start cloudflared quick tunnel to expose Flask (serving index.html and /bypass)
+    to a real public HTTPS URL without user needing to enter or host a manual Mini App link.
+    """
     global _TUNNEL_PROC, _CURRENT_PUBLIC_URL
-    if _CURRENT_PUBLIC_URL and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
+    if _CURRENT_PUBLIC_URL and _CURRENT_PUBLIC_URL.startswith("https://") and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
         return _CURRENT_PUBLIC_URL
 
     cf_bin = get_cloudflared_path()
     if not cf_bin:
+        logger.info("ℹ️ Cloudflared binary not available locally; relying on environment or direct web host.")
         return None
 
     try:
@@ -235,7 +238,7 @@ def start_auto_tunnel(port: int) -> Optional[str]:
 
         start_time = time.time()
         tunnel_url = None
-        while time.time() - start_time < 12:
+        while time.time() - start_time < 25:
             line = proc.stderr.readline()
             if not line and proc.poll() is not None:
                 break
@@ -244,15 +247,31 @@ def start_auto_tunnel(port: int) -> Optional[str]:
                 tunnel_url = m.group(0)
                 _CURRENT_PUBLIC_URL = tunnel_url
                 logger.info(f"🚀 Real Public Cloudflare HTTPS URL generated: {tunnel_url}")
+                logger.info(f"🌐 Mini App HTML UI is automatically exposed via Cloudflare Tunnel at: {tunnel_url}")
                 break
 
-        def _drain():
+        def _drain_and_supervisor():
+            nonlocal proc
             while proc.poll() is None:
                 try:
-                    proc.stderr.readline()
+                    line = proc.stderr.readline()
+                    if not line:
+                        break
+                    m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
+                    if m:
+                        global _CURRENT_PUBLIC_URL
+                        _CURRENT_PUBLIC_URL = m.group(0)
                 except Exception:
                     break
-        threading.Thread(target=_drain, daemon=True, name="CloudflaredDrain").start()
+
+            # If tunnel process exited while bot is running, auto-restart it
+            time.sleep(3)
+            with _TUNNEL_LOCK:
+                if not _CURRENT_PUBLIC_URL or "trycloudflare.com" in _CURRENT_PUBLIC_URL:
+                    logger.warning("🔄 Cloudflare tunnel closed. Auto-restarting tunnel supervisor...")
+                    start_auto_tunnel(port)
+
+        threading.Thread(target=_drain_and_supervisor, daemon=True, name="CloudflaredSupervisor").start()
 
         return tunnel_url
     except Exception as e:
@@ -263,19 +282,20 @@ def get_auto_public_url() -> str:
     """Return the dynamically resolved or manually pasted public URL for the Mini App and webhooks."""
     global _CURRENT_PUBLIC_URL
 
-    # 1. Manual paste in code (Highest priority)
+    # 1. Manual paste in code (Highest priority if user explicitly defined it)
     if MANUAL_MINI_APP_URL and MANUAL_MINI_APP_URL.strip():
         url = MANUAL_MINI_APP_URL.strip().rstrip("/")
         _CURRENT_PUBLIC_URL = url
         return url
 
-    if _CURRENT_PUBLIC_URL and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
+    # 2. Existing valid public HTTPS tunnel / detected URL
+    if _CURRENT_PUBLIC_URL and not _CURRENT_PUBLIC_URL.startswith("http://localhost") and not _CURRENT_PUBLIC_URL.startswith("http://127.0.0.1"):
         return _CURRENT_PUBLIC_URL
 
-    # 2. Environment variables for Mini App / Web App
+    # 3. Environment variables for Mini App / Web App
     for env_key in ("MINI_APP_URL", "WEBAPP_URL", "PUBLIC_URL", "APP_URL"):
         env_val = os.environ.get(env_key, "").strip().rstrip("/")
-        if env_val and not env_val.startswith("http://localhost"):
+        if env_val and not env_val.startswith("http://localhost") and not env_val.startswith("http://127.0.0.1"):
             _CURRENT_PUBLIC_URL = env_val
             return _CURRENT_PUBLIC_URL
 
@@ -298,9 +318,9 @@ def get_auto_public_url() -> str:
         _CURRENT_PUBLIC_URL = koyeb_url
         return _CURRENT_PUBLIC_URL
 
-    # Auto create a real public URL if on localhost or no external domain
+    # 4. Auto create a real public HTTPS URL via Cloudflare Tunnel so user doesn't need to manually configure anything
     with _TUNNEL_LOCK:
-        if not _CURRENT_PUBLIC_URL or _CURRENT_PUBLIC_URL.startswith("http://localhost"):
+        if not _CURRENT_PUBLIC_URL or _CURRENT_PUBLIC_URL.startswith("http://localhost") or _CURRENT_PUBLIC_URL.startswith("http://127.0.0.1"):
             tunnel_url = start_auto_tunnel(PORT)
             if tunnel_url:
                 _CURRENT_PUBLIC_URL = tunnel_url
@@ -868,6 +888,7 @@ class BypassEngine:
         self.userbot: Optional[TelegramClient] = None
         self.userbot_connected = False
         self.alex_bot_id: Optional[int] = None
+        self.alex_entity: Any = None
         self.dzhq_bot_id: Optional[int] = None
         self.dzhq_group_entity: Any = None
 
@@ -961,6 +982,37 @@ class BypassEngine:
 
 engine = BypassEngine()
 
+def sanitize_engine_names(text: Optional[str]) -> str:
+    """
+    Ensure engine names like @alexbypassbot, @DZHQ_BypassBot, etc. are NEVER shown to users.
+    Replaces internal bot handles with clean generic terms like 'Bypass Engine'.
+    """
+    if not text:
+        return "Bypass Engine could not resolve this link."
+
+    replacements = [
+        (re.compile(r'@?alexbypassbot', re.I), "Bypass Engine"),
+        (re.compile(r'@?dzhq_bypassbot', re.I), "Bypass Engine"),
+        (re.compile(r'@?dzhqbot', re.I), "Bypass Engine"),
+        (re.compile(r'\balexbypass\b', re.I), "Bypass Engine"),
+        (re.compile(r'\balex_dm\b', re.I), "bypass_engine"),
+        (re.compile(r'\bAlex Bypass Bot\b', re.I), "Bypass Engine"),
+        (re.compile(r'\bAlex Bot\b', re.I), "Bypass Engine"),
+        (re.compile(r'\bAlex DM\b', re.I), "Bypass Engine"),
+        (re.compile(r'\bAlex\b', re.I), "Bypass Engine"),
+        (re.compile(r'\bDZHQ bot\b', re.I), "Bypass Engine"),
+        (re.compile(r'\bDZHQ\b', re.I), "Bypass Engine"),
+        (re.compile(r'Cannot send requests while disconnected', re.I), "Engine temporarily reconnecting"),
+        (re.compile(r'Userbot send error:?\s*', re.I), "Engine status: "),
+        (re.compile(r'Telethon Userbot', re.I), "Bypass Engine"),
+        (re.compile(r'Userbot', re.I), "Engine"),
+    ]
+
+    res = str(text)
+    for pattern, repl in replacements:
+        res = pattern.sub(repl, res)
+    return res
+
 async def safe_telethon_send(
     entity: Any,
     message_text: str,
@@ -969,21 +1021,35 @@ async def safe_telethon_send(
 ) -> Tuple[Optional[Any], Optional[str]]:
     """
     Safely sends a message via Telethon Userbot with:
-    1. Comprehensive FloodWaitError handling & automatic backoff.
-    2. PeerFloodError detection & cooldown.
-    3. Strict Link-Safety enforcement (NEVER sends /start, chat commands, or plain text to Alex Bot/DZHQ).
-    4. Anti-Flood Human Pacing (minimum 2.5s delay between sends) with asyncio lock.
+    1. MTProto Disconnection Auto-Recovery & Instant Reconnection.
+    2. Comprehensive FloodWaitError handling & automatic backoff.
+    3. PeerFloodError detection & cooldown.
+    4. Strict Link-Safety enforcement (NEVER sends /start, chat commands, or plain text to external bots).
+    5. Anti-Flood Human Pacing (minimum 2.5s delay between sends) with asyncio lock.
+    6. Complete Provider Identity Masking (Engine names never leak).
     Returns: (sent_message_object, error_description)
     """
-    if not engine.userbot or not engine.userbot_connected:
-        return None, "Telethon Userbot is not connected."
+    if not engine.userbot:
+        return None, "Bypass Engine is not initialized."
 
-    # 1. Link-Safety Check if target is Alex Bot or external bypasser
+    # Active MTProto Connection Check & Auto-Reconnect
+    try:
+        if not engine.userbot.is_connected():
+            logger.info("🔄 Userbot MTProto connection dropped. Reconnecting before send...")
+            await engine.userbot.connect()
+            engine.userbot_connected = await engine.userbot.is_user_authorized()
+    except Exception as conn_err:
+        logger.warning(f"⚠️ Userbot pre-send reconnect attempt: {conn_err}")
+
+    if not engine.userbot_connected:
+        return None, "Bypass Engine is currently reconnecting. Please tap Retry in a few seconds."
+
+    # 1. Link-Safety Check if target is external bypasser
     if enforce_link_safety:
         cleaned_link = sanitize_and_validate_outbound_link(message_text)
         if not cleaned_link:
-            logger.warning(f"🛡️ [SAFETY SHIELD] Refused to send invalid non-link payload to userbot peer: {repr(message_text[:40])}")
-            return None, "Payload was not a valid URL (safety rule: only http/https or domain links permitted)."
+            logger.warning(f"🛡️ [SAFETY SHIELD] Refused to send invalid non-link payload to engine: {repr(message_text[:40])}")
+            return None, "Invalid target URL format (safety rule: only valid web or domain links permitted)."
         message_text = cleaned_link
 
     # 2. Check if global FloodWait cooldown is still active
@@ -992,7 +1058,7 @@ async def safe_telethon_send(
         wait_left = int(engine.telethon_floodwait_until - now)
         if wait_left > 30:
             logger.warning(f"⚠️ [TELETHON FLOODWAIT] Active FloodWait cooldown ({wait_left}s remaining). Skipping request to protect account.")
-            return None, f"Telegram FloodWait is active ({wait_left}s remaining). Request postponed to protect userbot."
+            return None, f"Telegram FloodWait is active ({wait_left}s remaining). Request postponed to protect engine."
         else:
             _trace("SAFETY", f"Sleeping {wait_left}s for active FloodWait cooldown...")
             await asyncio.sleep(wait_left + 1)
@@ -1006,10 +1072,14 @@ async def safe_telethon_send(
             _trace("SAFETY", f"Pacing userbot send: sleeping {delay_needed:.2f}s...")
             await asyncio.sleep(delay_needed)
 
-        # Attempt sending with FloodWait protection and retry
+        # Attempt sending with auto-reconnect on disconnect and FloodWait protection
         max_attempts = 2
         for attempt in range(max_attempts):
             try:
+                if not engine.userbot.is_connected():
+                    logger.info("🔄 Re-establishing MTProto socket connection...")
+                    await engine.userbot.connect()
+
                 sent = await engine.userbot.send_message(entity, message_text, reply_to=reply_to)
                 engine.telethon_last_send_ts = time.time()
                 return sent, None
@@ -1023,27 +1093,43 @@ async def safe_telethon_send(
                     await asyncio.sleep(wait_sec + 2)
                     continue
                 else:
-                    return None, f"Telegram FloodWait triggered ({wait_sec}s). Operation aborted to safeguard user account."
+                    return None, f"Telegram FloodWait triggered ({wait_sec}s). Operation aborted to safeguard engine."
             except PeerFloodError as e:
-                logger.error(f"⚠️ [TELETHON PEER FLOOD] Telegram flagged peer message rate. Cooldown 120s set to prevent ban: {e}")
+                logger.error(f"⚠️ [TELETHON PEER FLOOD] Telegram flagged peer message rate. Cooldown 120s set to prevent restriction: {e}")
                 engine.telethon_floodwait_until = time.time() + 120.0
-                return None, "Telegram PeerFlood rate-limit detected. Cooldown activated to prevent account restriction."
+                return None, "Telegram rate-limit detected. Cooldown activated to protect engine."
             except UserDeactivatedBanError as e:
                 logger.critical(f"❌ [ACCOUNT BANNED] Telethon user account was deactivated or banned by Telegram: {e}")
                 engine.userbot_connected = False
-                return None, "Userbot account is banned or deactivated by Telegram."
+                return None, "Bypass Engine account was restricted by Telegram."
             except Exception as e:
                 err_str = str(e)
+                if "Cannot send requests while disconnected" in err_str or "disconnected" in err_str.lower() or isinstance(e, ConnectionError):
+                    logger.warning(f"⚠️ Userbot disconnected during send: {e}. Auto-reconnecting immediately (attempt {attempt+1}/{max_attempts})...")
+                    try:
+                        await engine.userbot.connect()
+                        engine.userbot_connected = await engine.userbot.is_user_authorized()
+                        if engine.userbot_connected:
+                            await asyncio.sleep(1.0)
+                            sent = await engine.userbot.send_message(entity, message_text, reply_to=reply_to)
+                            engine.telethon_last_send_ts = time.time()
+                            return sent, None
+                    except Exception as retry_err:
+                        logger.error(f"❌ Retry send after reconnect failed: {retry_err}")
+                    return None, "Bypass Engine is temporarily reconnecting. Please tap Retry."
+
                 if "FLOOD_WAIT" in err_str.upper():
                     m = re.search(r'FLOOD_WAIT_?(\d+)', err_str, re.I)
                     wait_sec = int(m.group(1)) if m else 15
                     engine.telethon_floodwait_until = time.time() + wait_sec + 2
                     logger.warning(f"⚠️ [FLOOD_WAIT DETECTED] Wait {wait_sec}s recorded.")
                     return None, f"Telegram FloodWait active ({wait_sec}s)."
-                logger.error(f"❌ Userbot send_message failed: {e}")
-                return None, f"Userbot send error: {e}"
 
-    return None, "Failed to send message after retries."
+                logger.error(f"❌ Userbot send_message failed: {e}")
+                clean_msg = sanitize_engine_names(err_str)
+                return None, f"Could not send to Bypass Engine: {clean_msg}"
+
+    return None, "Failed to send message to Bypass Engine after retries."
 
 # ══════════════════════════════════════════════════════════════
 #  USERBOT TELEGRAM HANDLERS (DZHQ GROUP/DM + ALEX DM)
@@ -1120,7 +1206,7 @@ def setup_userbot_handlers(client: TelegramClient):
 
         if status == "intermediate":
             target_job["state"] = JobState.PROCESSING
-            target_job["status_msg"] = "⏳ ᴘʀσᴄєѕѕιɴɢ... (DZHQ bypass)"
+            target_job["status_msg"] = "⏳ ᴘʀσᴄєѕѕιɴɢ... (Bypass Engine solving)"
             return
 
         # Auto-click Delete button on DZHQ result message
@@ -1147,7 +1233,7 @@ def setup_userbot_handlers(client: TelegramClient):
                 target_job["state"] = JobState.RESULT_FOUND
                 target_job["event"].set()
         elif status in ("failed", "rate_limit", "no_link"):
-            target_job["error"] = parsed[0].get("error", "DZHQ failed to bypass link")
+            target_job["error"] = sanitize_engine_names(parsed[0].get("error", "Bypass Engine failed to resolve link"))
             target_job["state"] = JobState.FAILED
             target_job["event"].set()
 
@@ -1192,7 +1278,7 @@ def setup_userbot_handlers(client: TelegramClient):
 
         if not parsed or parsed.get("status") == "intermediate":
             target_job["state"] = JobState.PROCESSING
-            target_job["status_msg"] = "🔄 ʙʏᴘᴀѕѕιɴɢ... (Alex DM solving)"
+            target_job["status_msg"] = "🔄 ʙʏᴘᴀѕѕιɴɢ... (Bypass Engine solving)"
             return
 
         if parsed.get("status") == "ok" and parsed.get("bypassed"):
@@ -1211,7 +1297,7 @@ def setup_userbot_handlers(client: TelegramClient):
                 if engine.alex_dm_queue and engine.alex_dm_queue[0] == target_job_id:
                     engine.alex_dm_queue.pop(0)
 
-            target_job["error"] = parsed.get("error", "Alex DM bypass failed")
+            target_job["error"] = sanitize_engine_names(parsed.get("error", "Bypass Engine failed to resolve link"))
             target_job["state"] = JobState.FAILED
             target_job["event"].set()
 
@@ -1313,8 +1399,8 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
             if current_provider == "dzhq":
                 group_target = engine.dzhq_group_entity if engine.dzhq_group_entity else DZHQ_GROUP
                 if not group_target:
-                    _trace("ENGINE", "Skipping DZHQ: group not configured. DZHQ bot modders require an authorized group.")
-                    last_error_detail = "DZHQ bot requires an authorized Telegram group (modder restriction). Set MANUAL_DZHQ_GROUP in bot.py."
+                    _trace("ENGINE", "Skipping DZHQ: group not configured.")
+                    last_error_detail = "Bypass Engine 2 is currently unavailable (requires authorized group setup)."
                     continue
 
                 clean_target = sanitize_and_validate_outbound_link(target_url)
@@ -1325,37 +1411,38 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                 sent, send_err = await safe_telethon_send(group_target, f"/b {clean_target}", enforce_link_safety=False)
                 if not sent or send_err:
                     _trace("ENGINE", f"DZHQ group send failed: {send_err}")
-                    last_error_detail = f"Could not send to DZHQ group: {send_err}"
+                    last_error_detail = f"Could not send to Bypass Engine: {sanitize_engine_names(send_err)}"
                     continue
                 job["dzhq_sent_id"] = sent.id
-                _trace("ENGINE", f"Sent /b {clean_target} to DZHQ group (msg id {sent.id})")
+                _trace("ENGINE", f"Sent /b {clean_target} to engine group (msg id {sent.id})")
 
             elif current_provider == "alex_dm":
                 clean_target = sanitize_and_validate_outbound_link(target_url)
                 if not clean_target:
-                    last_error_detail = "Invalid target URL format. Alex Bypass Bot strictly accepts links starting with http://, https://, or domain/path."
+                    last_error_detail = "Invalid target URL format. Bypass Engine requires links starting with http://, https://, or domain/path."
                     continue
 
                 with engine.alex_queue_lock:
                     engine.alex_dm_queue.append(job_id)
 
-                sent, send_err = await safe_telethon_send(ALEX_BOT, clean_target, enforce_link_safety=True)
+                alex_target = engine.alex_entity if engine.alex_entity else ALEX_BOT
+                sent, send_err = await safe_telethon_send(alex_target, clean_target, enforce_link_safety=True)
                 if not sent or send_err:
                     with engine.alex_queue_lock:
                         if engine.alex_dm_queue and engine.alex_dm_queue[0] == job_id:
                             engine.alex_dm_queue.pop(0)
                     _trace("ENGINE", f"Alex DM send failed: {send_err}")
-                    last_error_detail = f"Could not send to {ALEX_BOT}: {send_err}"
+                    last_error_detail = f"Could not send to Bypass Engine: {sanitize_engine_names(send_err)}"
                     continue
                 job["alex_sent_id"] = sent.id
-                _trace("ENGINE", f"Sent {clean_target} to {ALEX_BOT} in DM (msg id {sent.id})")
+                _trace("ENGINE", f"Sent {clean_target} to Bypass Engine (msg id {sent.id})")
 
             provider_timeout = ALEX_DM_TIMEOUT_SEC if current_provider == "alex_dm" else BYPASS_IDLE_TIMEOUT_SEC
             while time.time() - t0 < MAX_BYPASS_TIMEOUT_SEC:
                 now = time.time()
                 if now - job["last_activity_ts"] > provider_timeout:
                     _trace("ENGINE", f"Provider {current_provider} idle timeout ({provider_timeout}s)")
-                    last_error_detail = f"Provider {current_provider} timed out after {provider_timeout}s without response"
+                    last_error_detail = f"Bypass Engine timed out after {provider_timeout}s without response"
                     break
 
                 try:
@@ -1380,10 +1467,11 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                 else:
                     user_mention = f"<code>{first_name_esc}</code>"
 
+                provider_display = "BYPASS_ENGINE" if current_provider in ("alex_dm", "dzhq") else current_provider.upper()
                 log_entry = (
                     f"✅ <b>Bypass Success</b>\n"
                     f"• User: {user_mention}\n"
-                    f"• Provider: <code>{current_provider.upper()}</code>\n"
+                    f"• Provider: <code>{provider_display}</code>\n"
                     f"• Time: <code>{duration_ms}ms</code>\n"
                     f"• Original: {job['url']}\n"
                     f"• Destination: {job['final_url']}"
@@ -1394,7 +1482,7 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                     "status": True,
                     "developer": DEVELOPER,
                     "response_ms": f"{duration_ms}ms",
-                    "source": current_provider,
+                    "source": "bypass_engine" if current_provider in ("alex_dm", "dzhq") else current_provider,
                     "url": job["final_url"],
                     "links": {
                         "original": job["url"],
@@ -1402,12 +1490,12 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
                     }
                 }
             elif job["state"] == JobState.FAILED and job.get("error"):
-                last_error_detail = job.get("error")
+                last_error_detail = sanitize_engine_names(job.get("error"))
 
         except Exception as e:
             _trace("ENGINE", f"Provider {current_provider} send error: {e}")
-            logger.error(f"❌ Failed to send message to {current_provider}: {e}")
-            last_error_detail = f"Could not send message to {current_provider}: {e}"
+            logger.error(f"❌ Failed to send message to engine: {e}")
+            last_error_detail = f"Could not dispatch link to Bypass Engine: {sanitize_engine_names(str(e))}"
 
         _trace("ENGINE", f"Primary {current_provider} did not resolve. Attempting fallback.")
 
@@ -1455,7 +1543,7 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
     engine.failed_bypasses += 1
     job["state"] = JobState.FAILED
 
-    clean_err = last_error_detail or "Unable to bypass this link with active providers."
+    clean_err = sanitize_engine_names(last_error_detail or "Unable to bypass this link with active providers.")
     if "unable to bypass" in clean_err.lower():
         clean_err = "Unable to bypass this link with active providers. The shortener domain is either unsupported, expired, or requires interactive captcha."
 
@@ -2276,17 +2364,17 @@ async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_m
         if reply_msg_id:
             schedule_auto_delete(chat_id, reply_msg_id, 120)
     else:
-        err_msg = result.get("message") or "The link could not be bypassed or expired."
-        is_userbot_offline = not engine.userbot_connected or "userbot is offline" in err_msg.lower() or "userbot is not connected" in err_msg.lower()
+        err_msg = sanitize_engine_names(result.get("message") or "The link could not be bypassed or expired.")
+        is_userbot_offline = not engine.userbot_connected or "userbot is offline" in err_msg.lower() or "not connected" in err_msg.lower()
 
         if is_userbot_offline:
             err_text = (
                 f"❌ <b>{to_small_caps('Bypass Failed!')}</b>\n\n"
-                f"⚠️ <b>{to_small_caps('Telethon Userbot Offline')}</b>\n"
-                f"<i>{to_small_caps('The bot cannot send links to bypass engines because Telethon Userbot is not connected.')}</i>\n\n"
+                f"⚠️ <b>{to_small_caps('Bypass Engine Offline')}</b>\n"
+                f"<i>{to_small_caps('The bot cannot send links because the Bypass Engine is currently reconnecting or offline.')}</i>\n\n"
                 f"🔧 <b>{to_small_caps('How to Fix (Bot Owner)')}:</b>\n"
-                f"• <i>{to_small_caps('Please set TELEGRAM_SESSION, TELEGRAM_API_ID, and TELEGRAM_API_HASH in your hosting environment (.env).')}</i>\n"
-                f"• <i>{to_small_caps('Send /stats to check live Userbot & provider status.')}</i>\n\n"
+                f"• <i>{to_small_caps('Please verify TELEGRAM_SESSION in your hosting environment (.env).')}</i>\n"
+                f"• <i>{to_small_caps('Send /stats to check live Bypass Engine status.')}</i>\n\n"
                 f"🔗 <b>{to_small_caps('Original Link')}:</b>\n"
                 f"{html.escape(target_url)}"
             )
@@ -2527,17 +2615,18 @@ async def run_bot_polling():
                     elif text in ("/stats", "/users"):
                         is_owner = bool(not OWNER_ID or user_id == OWNER_ID)
                         if is_owner:
-                            dzhq_mode = f"Group ({DZHQ_GROUP})" if DZHQ_GROUP else "Not Set (Required by DZHQ modders)"
-                            mini_app_status = f"{get_auto_public_url()} (Manual in code)" if MANUAL_MINI_APP_URL else f"{get_auto_public_url()} (Auto)"
+                            engine_1_status = "🟢 " + to_small_caps("Active & Ready") if engine.userbot_connected else "🔴 " + to_small_caps("Offline")
+                            engine_2_status = ("🟢 " + to_small_caps("Ready")) if DZHQ_GROUP else ("⚪ " + to_small_caps("Optional (Group)"))
+                            mini_app_status = f"{get_auto_public_url()} (Manual in code)" if MANUAL_MINI_APP_URL else f"{get_auto_public_url()} (Auto Cloudflare / Dynamic)"
                             stats_text = (
                                 f"📊 <b>{to_small_caps('bot statistics & status')}</b>\n\n"
-                                f"• 🤖 <b>{to_small_caps('userbot status')}:</b> {'🟢 ' + to_small_caps('online') if engine.userbot_connected else '🔴 ' + to_small_caps('offline')}\n"
+                                f"• 🤖 <b>{to_small_caps('bypass engine')}:</b> {'🟢 ' + to_small_caps('online') if engine.userbot_connected else '🔴 ' + to_small_caps('offline')}\n"
                                 f"• 👥 <b>{to_small_caps('total registered users')}:</b> <code>{len(get_registered_users())}</code>\n"
                                 f"• ⚡ <b>{to_small_caps('total bypasses')}:</b> <code>{engine.total_bypasses}</code>\n"
                                 f"• ✅ <b>{to_small_caps('successful')}:</b> <code>{engine.successful_bypasses}</code>\n"
                                 f"• ❌ <b>{to_small_caps('failed')}:</b> <code>{engine.failed_bypasses}</code>\n"
-                                f"• 🎯 <b>{to_small_caps('dzhq provider')}:</b> <code>{DZHQ_BOT}</code> ({dzhq_mode})\n"
-                                f"• 🎯 <b>{to_small_caps('alex provider')}:</b> <code>{ALEX_BOT}</code> (Direct DM)\n"
+                                f"• 🎯 <b>{to_small_caps('bypass engine 1')}:</b> <code>{engine_1_status}</code>\n"
+                                f"• 🎯 <b>{to_small_caps('bypass engine 2')}:</b> <code>{engine_2_status}</code>\n"
                                 f"• 🚀 <b>{to_small_caps('mini app url')}:</b> {mini_app_status}"
                             )
                             await bot_api.send_message(chat_id, stats_text, reply_to_message_id=msg.get("message_id"), disable_web_page_preview=True)
@@ -2769,55 +2858,92 @@ async def main_async():
                 StringSession(TELEGRAM_SESSION),
                 TELEGRAM_API_ID,
                 TELEGRAM_API_HASH,
-                connection=ConnectionTcpAbridged,
-                auto_reconnect=True
+                device_model="Samsung Galaxy S24 Ultra",
+                system_version="Android 14",
+                app_version="10.14.5",
+                lang_code="en",
+                system_lang_code="en",
+                auto_reconnect=True,
+                connection_retries=None,
+                retry_delay=2,
+                timeout=25
             )
-            await userbot.start()
+            await userbot.connect()
             if await userbot.is_user_authorized():
                 engine.userbot = userbot
                 engine.userbot_connected = True
 
-                # Resolve DZHQ group entity if explicitly configured
+                # Resolve engine 2 group entity if explicitly configured
                 if DZHQ_GROUP:
                     try:
                         engine.dzhq_group_entity = await userbot.get_entity(DZHQ_GROUP)
-                        logger.info(f"✅ DZHQ Group resolved: {getattr(engine.dzhq_group_entity, 'title', DZHQ_GROUP)}")
+                        logger.info(f"✅ Bypass Engine 2 Group resolved: {getattr(engine.dzhq_group_entity, 'title', DZHQ_GROUP)}")
                     except Exception as e:
-                        logger.warning(f"⚠️ Could not resolve DZHQ Group ({DZHQ_GROUP}): {e}. Note: DZHQ requires this group.")
+                        logger.warning(f"⚠️ Could not resolve Engine 2 Group ({DZHQ_GROUP}): {e}")
                 else:
-                    logger.info("ℹ️ DZHQ Group is not configured. (DZHQ bot modders only allow group mode). Alex DM will handle bypasses.")
+                    logger.info("ℹ️ Engine 2 Group is not configured. Engine 1 will handle bypasses directly.")
 
                 try:
                     d_ent = await userbot.get_entity(DZHQ_BOT)
                     engine.dzhq_bot_id = d_ent.id
-                    logger.info(f"✅ DZHQ Bot resolved: {DZHQ_BOT} (ID: {d_ent.id})")
+                    logger.info("✅ Bypass Engine 2 Bot resolved")
                 except Exception as e:
-                    logger.warning(f"⚠️ Could not resolve {DZHQ_BOT}: {e}")
+                    logger.warning(f"⚠️ Could not resolve Engine 2 Bot: {e}")
 
                 try:
                     a_ent = await userbot.get_entity(ALEX_BOT)
+                    engine.alex_entity = a_ent
                     engine.alex_bot_id = a_ent.id
-                    logger.info(f"✅ Alex Bot resolved: {ALEX_BOT} (ID: {a_ent.id})")
+                    logger.info("✅ Bypass Engine 1 resolved")
                 except Exception as e:
-                    logger.warning(f"⚠️ Could not resolve {ALEX_BOT}: {e}")
+                    logger.warning(f"⚠️ Could not resolve Engine 1: {e}")
 
-                # Note: /start is NEVER sent to Alex DM or external bots to protect the Telethon userbot account from bans
-                logger.info(f"🛡️ Userbot initialized safely for {ALEX_BOT} (only valid URLs will be forwarded on demand)")
+                # Note: /start is NEVER sent to external bots to protect the Telethon userbot account from bans
+                logger.info("🛡️ Userbot initialized safely (only valid URLs will be forwarded on demand)")
 
                 setup_userbot_handlers(userbot)
                 me = await userbot.get_me()
                 logger.info(f"✅ Userbot connected: {me.first_name} (@{getattr(me, 'username', 'N/A')})")
+
+                # Background keep-alive watchdog to prevent disconnects and session drops
+                async def _userbot_watchdog():
+                    while True:
+                        await asyncio.sleep(15)
+                        if engine.userbot:
+                            try:
+                                if not engine.userbot.is_connected():
+                                    logger.info("🔄 Watchdog: Re-establishing Userbot MTProto connection...")
+                                    await engine.userbot.connect()
+                                if await engine.userbot.is_user_authorized():
+                                    if not engine.userbot_connected:
+                                        engine.userbot_connected = True
+                                        logger.info("✅ Userbot auto-reconnected successfully.")
+                                else:
+                                    if engine.userbot_connected:
+                                        engine.userbot_connected = False
+                                        logger.warning("⚠️ Userbot session was revoked by Telegram.")
+                            except Exception as ex:
+                                _trace("WATCHDOG", f"Userbot ping error: {ex}")
+
+                asyncio.create_task(_userbot_watchdog())
             else:
-                logger.error("❌ Telethon Session is not authorized. Check TELEGRAM_SESSION.")
+                logger.error(
+                    "❌ Telethon Session is not authorized / revoked by Telegram!\n"
+                    "👉 REASON: Session string was terminated from Telegram Devices.\n"
+                    "👉 FIX: Run 'python3 generate_session.py' with TELEGRAM_API_ID and TELEGRAM_API_HASH."
+                )
         except Exception as e:
             logger.error(f"❌ Userbot startup failed: {e}")
     else:
         logger.warning("⚠️ Telethon Userbot credentials missing in .env (API_ID, API_HASH, or TELEGRAM_SESSION).")
 
-    # 2. Launch Telegram Bot Polling (with Real Colored Buttons)
+    # 2. Start Cloudflare Tunnel for HTML Mini App in background if needed
+    threading.Thread(target=lambda: start_auto_tunnel(PORT), daemon=True, name="BootCloudflared").start()
+
+    # 3. Launch Telegram Bot Polling (with Real Colored Buttons)
     polling_task = asyncio.create_task(run_bot_polling())
 
-    # 3. Print Startup Banner
+    # 4. Print Startup Banner
     detected_url = get_auto_public_url()
     dzhq_flow_desc = f"Group Flow ({DZHQ_GROUP})" if DZHQ_GROUP else "Not set (Requires authorized group)"
     mini_app_desc = f"{detected_url} (Manual in code)" if MANUAL_MINI_APP_URL else f"{detected_url} (Auto)"
@@ -2828,9 +2954,9 @@ ProviderBotz Auto Bypass
 Flask: running (Port {PORT})
 Public Bot API: {'online (@' + BOT_USERNAME + ')' if BOT_TOKEN else 'offline'}
 Button Styles: PRIMARY (Blue), SUCCESS (Green), DANGER (Red)
-Telethon Userbot: {'connected' if engine.userbot_connected else 'offline'}
-DZHQ: {dzhq_flow_desc}
-Alex DM: DM Flow ({ALEX_BOT})
+Bypass Engine: {'connected' if engine.userbot_connected else 'offline'}
+Engine 1: Ready (Direct Flow)
+Engine 2: {dzhq_flow_desc}
 Mini App Link: {mini_app_desc}
 Health: {detected_url}/health
 Mini App: {detected_url}/
