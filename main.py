@@ -156,6 +156,8 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "ProviderPro").strip()
 _CURRENT_PUBLIC_URL: Optional[str] = None
 _TUNNEL_PROC: Optional[subprocess.Popen] = None
 _TUNNEL_LOCK = threading.Lock()
+_TUNNEL_SUPERVISOR_ACTIVE: bool = False
+_TUNNEL_FAIL_COUNT: int = 0
 
 def get_cloudflared_path() -> Optional[str]:
     """Find or download a standalone cloudflared binary for the host OS & architecture."""
@@ -251,17 +253,30 @@ def start_auto_tunnel(port: int) -> Optional[str]:
     Start cloudflared quick tunnel to expose Flask (serving index.html and /bypass)
     to a real public HTTPS URL without user needing to enter or host a manual Mini App link.
     """
-    global _TUNNEL_PROC, _CURRENT_PUBLIC_URL
+    global _TUNNEL_PROC, _CURRENT_PUBLIC_URL, _TUNNEL_SUPERVISOR_ACTIVE, _TUNNEL_FAIL_COUNT
     if _CURRENT_PUBLIC_URL and _CURRENT_PUBLIC_URL.startswith("https://") and not _CURRENT_PUBLIC_URL.startswith("http://localhost"):
         return _CURRENT_PUBLIC_URL
+
+    if _TUNNEL_FAIL_COUNT >= 3:
+        logger.info("ℹ️ Cloudflare tunnel disabled after repeated exit errors. Relying on platform web host.")
+        return None
 
     cf_bin = get_cloudflared_path()
     if not cf_bin:
         logger.info("ℹ️ Cloudflared binary not available locally; relying on environment or direct web host.")
         return None
 
+    # Gracefully terminate any previous dead/stale instance
+    if _TUNNEL_PROC and _TUNNEL_PROC.poll() is None:
+        try:
+            _TUNNEL_PROC.terminate()
+            _TUNNEL_PROC.wait(timeout=2)
+        except Exception:
+            pass
+
     try:
-        cmd = [cf_bin, "tunnel", "--url", f"http://127.0.0.1:{port}"]
+        # Use --protocol http2 to avoid UDP/QUIC blockages on cloud container networks
+        cmd = [cf_bin, "tunnel", "--protocol", "http2", "--url", f"http://127.0.0.1:{port}"]
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -273,7 +288,7 @@ def start_auto_tunnel(port: int) -> Optional[str]:
 
         start_time = time.time()
         tunnel_url = None
-        while time.time() - start_time < 25:
+        while time.time() - start_time < 20:
             line = proc.stderr.readline()
             if not line and proc.poll() is not None:
                 break
@@ -281,32 +296,56 @@ def start_auto_tunnel(port: int) -> Optional[str]:
             if m:
                 tunnel_url = m.group(0)
                 _CURRENT_PUBLIC_URL = tunnel_url
+                _TUNNEL_FAIL_COUNT = 0
                 logger.info(f"🚀 Real Public Cloudflare HTTPS URL generated: {tunnel_url}")
                 logger.info(f"🌐 Mini App HTML UI is automatically exposed via Cloudflare Tunnel at: {tunnel_url}")
                 break
 
-        def _drain_and_supervisor():
-            nonlocal proc
-            while proc.poll() is None:
-                try:
-                    line = proc.stderr.readline()
-                    if not line:
+        # Single-instance supervisor thread (never runs multiple copies)
+        if not _TUNNEL_SUPERVISOR_ACTIVE:
+            _TUNNEL_SUPERVISOR_ACTIVE = True
+
+            def _drain_and_supervisor():
+                global _CURRENT_PUBLIC_URL, _TUNNEL_SUPERVISOR_ACTIVE, _TUNNEL_FAIL_COUNT, _TUNNEL_PROC
+                while True:
+                    cur_proc = _TUNNEL_PROC
+                    if not cur_proc:
                         break
-                    m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
-                    if m:
-                        global _CURRENT_PUBLIC_URL
-                        _CURRENT_PUBLIC_URL = m.group(0)
-                except Exception:
-                    break
 
-            # If tunnel process exited while bot is running, auto-restart it
-            time.sleep(3)
-            with _TUNNEL_LOCK:
-                if not _CURRENT_PUBLIC_URL or "trycloudflare.com" in _CURRENT_PUBLIC_URL:
-                    logger.warning("🔄 Cloudflare tunnel closed. Auto-restarting tunnel supervisor...")
-                    start_auto_tunnel(port)
+                    # Continuously drain stderr while process is active
+                    try:
+                        for line in iter(cur_proc.stderr.readline, ''):
+                            m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
+                            if m:
+                                _CURRENT_PUBLIC_URL = m.group(0)
+                                _TUNNEL_FAIL_COUNT = 0
+                    except Exception:
+                        pass
 
-        threading.Thread(target=_drain_and_supervisor, daemon=True, name="CloudflaredSupervisor").start()
+                    ret = cur_proc.wait()
+                    logger.info(f"ℹ️ Cloudflare tunnel process exited with code {ret}")
+
+                    _TUNNEL_FAIL_COUNT += 1
+                    if _TUNNEL_FAIL_COUNT >= 3:
+                        logger.warning(
+                            f"⚠️ Cloudflare tunnel exited ({ret}). Maximum retry limit (3) reached. "
+                            "Stopping supervisor to avoid loops. Relying on platform web host."
+                        )
+                        _TUNNEL_SUPERVISOR_ACTIVE = False
+                        break
+
+                    backoff = min(30, 6 * _TUNNEL_FAIL_COUNT)
+                    logger.warning(f"🔄 Cloudflare tunnel exited. Backing off for {backoff}s before retry ({_TUNNEL_FAIL_COUNT}/3)...")
+                    time.sleep(backoff)
+
+                    with _TUNNEL_LOCK:
+                        start_auto_tunnel(port)
+                        if _TUNNEL_PROC and _TUNNEL_PROC.poll() is None:
+                            continue
+                        else:
+                            break
+
+            threading.Thread(target=_drain_and_supervisor, daemon=True, name="CloudflaredSupervisor").start()
 
         return tunnel_url
     except Exception as e:
@@ -526,8 +565,19 @@ def is_valid_bypassed_destination(url: str, original_url: str) -> bool:
             # - t.me/+InviteCode (Private invite link)
             return True
 
-        # 3. Reject provider promo websites
-        if any(promo in host for promo in ("dzhq", "alexmodz")):
+        # 3. Reject provider promo websites and intermediate shortener ad gates
+        ad_indicators = (
+            "dzhq", "alexmodz", "adlinkfly", "thetechhint", "shortx",
+            "adfly", "shrinkme", "gplinks", "droplink", "linkvertise",
+            "ouo.io", "ouo.press", "shareus", "rocklinks", "urlking",
+            "shortner", "shorturl"
+        )
+        if any(ad in host for ad in ad_indicators):
+            return False
+
+        # 4. Reject intermediate query strings from shortener ad scripts
+        query_lower = (parsed.query or "").lower()
+        if any(q in query_lower for q in ("adlinkfly=", "adfly=", "countdown=", "?token=", "&token=", "adlink=")):
             return False
 
         return True
@@ -1346,45 +1396,6 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
     target_url = job["url"]
     t0 = time.time()
 
-    # Priority 0: Check fast direct redirect / query parameter unshortener
-    try:
-        fast_res = await fast_direct_bypass(target_url)
-        if fast_res and is_valid_bypassed_destination(fast_res, target_url):
-            duration_ms = int((time.time() - t0) * 1000)
-            engine.total_bypasses += 1
-            engine.successful_bypasses += 1
-            job["state"] = JobState.RESULT_FOUND
-            job["final_url"] = fast_res
-            job["provider"] = "direct_resolver"
-
-            user_id_val = job.get("user_id")
-            first_name_val = job.get("first_name") or "User"
-            first_name_esc = html.escape(str(first_name_val))
-            user_mention = f'<a href="tg://user?id={user_id_val}">{first_name_esc}</a> [<code>{user_id_val}</code>]' if user_id_val else f"<code>{first_name_esc}</code>"
-            log_entry = (
-                f"✅ <b>Bypass Success (Direct Fast v4.0)</b>\n"
-                f"• User: {user_mention}\n"
-                f"• Provider: <code>DIRECT_FAST</code>\n"
-                f"• Time: <code>{duration_ms}ms</code>\n"
-                f"• Original: {target_url}\n"
-                f"• Destination: {fast_res}"
-            )
-            asyncio.create_task(engine.log_to_owner(log_entry, reply_markup=build_owner_log_markup(user_id_val, target_url, fast_res)))
-
-            return {
-                "status": True,
-                "developer": DEVELOPER,
-                "response_ms": f"{duration_ms}ms",
-                "source": "direct_resolver",
-                "url": fast_res,
-                "links": {
-                    "original": target_url,
-                    "bypassed": fast_res
-                }
-            }
-    except Exception as e:
-        _trace("DIRECT", f"Pre-check direct bypass exception: {e}")
-
     if not engine.userbot or not engine.userbot_connected:
         job["state"] = JobState.FAILED
         job["error"] = "Telethon Userbot is offline. Please configure TELEGRAM_SESSION, TELEGRAM_API_ID, and TELEGRAM_API_HASH in your hosting settings (.env)."
@@ -1399,7 +1410,7 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
     # Provider Selection & Modder Policy:
     # DZHQ Bot (@DZHQ_BypassBot) only operates in authorized groups (modder restriction, DM is disabled).
     has_dzhq_group = bool(engine.dzhq_group_entity or DZHQ_GROUP)
-    is_alex_favored = any(k in target_url.lower() for k in ("urlking", "monteolympus", "alex", "shortx"))
+    is_alex_favored = any(k in target_url.lower() for k in ("urlking", "monteolympus", "alex", "shortx", "thetechhint", "adlinkfly", "droplink", "gplinks", "linkvertise"))
 
     if not has_dzhq_group:
         # Without an authorized group, DZHQ cannot be used (modders allow only group execution).
