@@ -129,7 +129,7 @@ MANUAL_MINI_APP_URL: str = ""
 
 # 🤖 8. MANUAL BOT TOKEN:
 # Paste your Bot Token from @BotFather here if not using .env or token.txt
-MANUAL_BOT_TOKEN: str = ""
+MANUAL_BOT_TOKEN: str = "8678804822:AAFhcBvuAI9Z-kArVGrju3bompsd8qg141g"
 
 # ══════════════════════════════════════════════════════════════
 #  SYSTEM CONFIGURATION & CREDENTIALS
