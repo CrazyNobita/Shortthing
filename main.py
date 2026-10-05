@@ -119,6 +119,14 @@ MANUAL_START_IMAGE_URL: str = "https://api.aniwallpaper.workers.dev/random?type=
 # 👑 5. BOT OWNER ID:
 MANUAL_OWNER_ID: Union[int, str, None] = 7931847651
 
+# 🔑 6. MANUAL TELEGRAM SESSION:
+# Paste your Telethon StringSession directly here if not using .env or session.txt
+MANUAL_TELEGRAM_SESSION: str = ""
+
+# 🌐 7. MANUAL MINI APP LINK:
+# Set your Telegram Mini App / WebApp URL here (or configure dynamically via bot using /setminiapp)
+MANUAL_MINI_APP_URL: str = ""
+
 # ══════════════════════════════════════════════════════════════
 #  SYSTEM CONFIGURATION & CREDENTIALS
 # ══════════════════════════════════════════════════════════════
@@ -128,7 +136,7 @@ OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
 # Public Bot Credentials
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAFCdWKWojP0zhG4xjW4OOY6WDS45sZiU90").strip()
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgbpb6q40Yvjw-SeZVyZicW2BXk-1kS0E").strip()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
 
 # Owner ID Priority: MANUAL_OWNER_ID -> OWNER_ID (env var)
@@ -136,7 +144,7 @@ _raw_owner = MANUAL_OWNER_ID if MANUAL_OWNER_ID is not None and str(MANUAL_OWNER
 OWNER_ID = int(_raw_owner) if str(_raw_owner).isdigit() else 7931847651
 
 # Start Message Image Priority: MANUAL_START_IMAGE_URL -> START_IMAGE_URL (env var)
-START_IMAGE_URL: str = (MANUAL_START_IMAGE_URL or os.environ.get("START_IMAGE_URL", "https://api.aniwallpaper.workers.dev/random?type=girl")).strip()
+START_IMAGE_URL: str = (MANUAL_START_IMAGE_URL or os.environ.get("START_IMAGE_URL", "")).strip()
 
 bot_api: Optional[Any] = None
 
@@ -155,7 +163,7 @@ if os.path.exists(_session_file):
     except Exception:
         pass
 
-TELEGRAM_SESSION = _saved_session or os.environ.get("TELEGRAM_SESSION", "1BVtsOKUBu6Gnza3fNKPNtJBH5BJ7RzjYcKPoe-TWKSbbot8C5pmadR57ouNjRiU5hjMfYuf5t8mJqmc45OXycxeMegVrkel7owZMZ51qgh8KSIsEunMU1wwvsrYfnAVY8TtFYZvqVPvHHPyWHew0YAsHbAc6Ak0mRBt3u68s1T3Iug_weGzjsIA-Gi1ra6m0P_9TLxA6w3NZ6k9tEMedQFM_MddpQUHCNmIPc3BxQvcVZ1DoNzgb_ESQZ94kg9WNJlDURRbWb8AdUrk-Lwf2J8W2V5eRd021RWX4YftdtTF_cYr7OAPTWtRatqXSJ2HTj80TKltXNqz5UntFDSGAZpm8bJXDXLQ=").strip() or "1BVtsOIEBu03moBzbxTbtDzq_9Ob0HWSVGAgesXEpzanbRk_GwC02S5uMZ5WHcFGm10VbStJD4pDmXfrq4uXHLtdCVdHtizC6omlJL5E95GCzaYY4bwlnlBqmdKSp9X9Wh4IVV5ce0-roJBz2noQAGCGSJOlGmOK7lJHdQjjomt9aQA5svUE6MvPdU4ZU0mdi892pDPbk0YXq57oc8xHMv1fmuaGBILo5vBQ0lQzqHKTVEY9ky_7xKBDn5tnnSoo0aNexr8mxwMmfo-aTZ7nIACqu_avEWR15tt2LOqMvSjLXt5PBF3Th-zZtgeP8MwXsF_6vpVnLI2iPFAtT85QQE1Fotxw838w="
+TELEGRAM_SESSION = (MANUAL_TELEGRAM_SESSION or "").strip() or _saved_session or os.environ.get("TELEGRAM_SESSION", "").strip() or "1BVtsOIEBu03moBzbxTbtDzq_9Ob0HWSVGAgesXEpzanbRk_GwC02S5uMZ5WHcFGm10VbStJD4pDmXfrq4uXHLtdCVdHtizC6omlJL5E95GCzaYY4bwlnlBqmdKSp9X9Wh4IVV5ce0-roJBz2noQAGCGSJOlGmOK7lJHdQjjomt9aQA5svUE6MvPdU4ZU0mdi892pDPbk0YXq57oc8xHMv1fmuaGBILo5vBQ0lQzqHKTVEY9ky_7xKBDn5tnnSoo0aNexr8mxwMmfo-aTZ7nIACqu_avEWR15tt2LOqMvSjLXt5PBF3Th-zZtgeP8MwXsF_6vpVnLI2iPFAtT85QQE1Fotxw838w="
 
 # External Bypass Bots (Supports DZHQ Group/DM & Alex DM)
 DZHQ_BOT = (os.environ.get("DZHQ_BOT_USERNAME") or MANUAL_DZHQ_BOT or "@DZHQ_BypassBot").strip()
@@ -171,6 +179,71 @@ else:
     DZHQ_GROUP = None
 
 ALEX_BOT = (os.environ.get("ALEX_BOT_USERNAME") or MANUAL_ALEX_BOT or "@alexbypassbot").strip()
+
+# Mini App Link Configuration & Storage
+def load_saved_miniapp_url() -> str:
+    """Load persisted Mini App URL from miniapp.txt or .env"""
+    _txt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "miniapp.txt")
+    if os.path.exists(_txt_path):
+        try:
+            with open(_txt_path, "r", encoding="utf-8") as f:
+                c = f.read().strip()
+                if c:
+                    return c
+        except Exception:
+            pass
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(_env_path):
+        try:
+            with open(_env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("MINI_APP_URL="):
+                        val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        if val:
+                            return val
+        except Exception:
+            pass
+    return ""
+
+def save_miniapp_url_to_disk(url: str):
+    """Persist Mini App URL to miniapp.txt and update .env if present."""
+    clean_u = url.strip()
+    _txt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "miniapp.txt")
+    try:
+        with open(_txt_path, "w", encoding="utf-8") as f:
+            f.write(clean_u)
+    except Exception as e:
+        logger.warning(f"Failed to write miniapp.txt: {e}")
+
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(_env_path):
+        try:
+            with open(_env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            found = False
+            new_lines = []
+            for line in lines:
+                if line.strip().startswith("MINI_APP_URL="):
+                    new_lines.append(f'MINI_APP_URL="{clean_u}"\n')
+                    found = True
+                else:
+                    new_lines.append(line)
+            if not found:
+                new_lines.append(f'\nMINI_APP_URL="{clean_u}"\n')
+            with open(_env_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+        except Exception as e:
+            logger.warning(f"Failed to update .env MINI_APP_URL: {e}")
+
+_saved_miniapp = load_saved_miniapp_url()
+MINI_APP_URL: str = (
+    (MANUAL_MINI_APP_URL or "").strip()
+    or _saved_miniapp
+    or os.environ.get("MINI_APP_URL", "").strip()
+    or os.environ.get("PUBLIC_URL", "").strip()
+    or "https://ais-dev-kmurw32gicz624bvfb4vyp-867421542653.asia-southeast1.run.app"
+)
 
 # Web Server & Port Configuration (Provides lightweight healthcheck for cloud platforms)
 PORT = int(os.environ.get("PORT", "5000"))
@@ -542,8 +615,8 @@ def sanitize_and_validate_outbound_link(url_str: str) -> Optional[str]:
 # ══════════════════════════════════════════════════════════════
 
 # DZHQ Regexes
-_RX_IN = re.compile(r'In\s+Link[^:\n]*?:-\s*\*{0,4}\s*(https?://[^\s*\n]+)', re.I)
-_RX_GOT = re.compile(r'Got\s+Result[^:\n]*?:-\s*\*{0,4}\s*(https?://[^\s*\n]+)', re.I)
+_RX_IN = re.compile(r'In\s*Link[^:\n]*?:?-?\s*[`*]*\s*(https?://[^\s*`\n]+)', re.I)
+_RX_GOT = re.compile(r'Got\s*Result[^:\n]*?:?-?\s*[`*]*\s*(https?://[^\s*`\n]+)', re.I)
 _RX_ERR = re.compile(
     r'invalid\s*link|not\s*support|unsupported|no\s*script|not\s*found|'
     r'error|failed|cannot|wrong|sorry|got\s+error',
@@ -567,7 +640,7 @@ _RX_GOT_ERR = re.compile(r'Got\s+Error[^:\n]*?:-\s*[`*\s]*(.*?)\s*[`*]*\s*$', re
 _RX_SEP = re.compile(r'━{3,}.*?✦.*?━{3,}')
 
 def parse_dzhq_message(text: str, entities: list, sent_link: str) -> List[Dict[str, Any]]:
-    """Parse DZHQ bot Telegram group response, rejecting promo links."""
+    """Parse DZHQ bot Telegram group response, rejecting promo links and matching the exact replied link."""
     if not text:
         return [{"status": "empty"}]
     stripped = text.strip()
@@ -606,6 +679,9 @@ def parse_dzhq_message(text: str, entities: list, sent_link: str) -> List[Dict[s
             continue
         r = _parse_dzhq_block(block, ent_urls, sent_link)
         if r:
+            # If the block explicitly matches the target link that was replied to, return it immediately
+            if r.get("original") and (is_same_url(r["original"], sent_link) or clean_url(r["original"]) == clean_url(sent_link)):
+                return [r]
             results.append(r)
 
     if not results:
@@ -1078,10 +1154,24 @@ def setup_userbot_handlers(client: TelegramClient):
         reply_to_id = getattr(rt_obj, 'reply_to_msg_id', None) if rt_obj else None
 
         target_job = None
+        replied_link = None
+
+        # Fetch replied-to message to extract the exact link that DZHQ replied to
+        if reply_to_id:
+            try:
+                replied_msg = await event.get_reply_message()
+                if replied_msg:
+                    r_text = getattr(replied_msg, 'text', '') or getattr(replied_msg, 'message', '') or getattr(replied_msg, 'raw_text', '') or ''
+                    r_urls = extract_valid_urls_from_text(r_text)
+                    if r_urls:
+                        replied_link = clean_url(r_urls[0])
+            except Exception as ex:
+                _trace("DZHQ", f"get_reply_message lookup failed: {ex}")
+
         with engine.jobs_lock:
             for job in engine.active_jobs.values():
                 if job["state"] in (JobState.WAITING, JobState.PROCESSING):
-                    # 1. Exact match with the sent /b message
+                    # 1. Exact match with the sent /b message ID
                     if reply_to_id and job.get("dzhq_sent_id") == reply_to_id:
                         target_job = job
                         break
@@ -1089,15 +1179,33 @@ def setup_userbot_handlers(client: TelegramClient):
                     elif reply_to_id and job.get("dzhq_last_msg_id") == reply_to_id:
                         target_job = job
                         break
-                    # 3. Or if original link is mentioned in the text
+                    # 3. Match by the link contained inside the replied message
+                    elif replied_link and (is_same_url(job["url"], replied_link) or clean_url(job["url"]) == replied_link):
+                        target_job = job
+                        break
+                    # 4. Match if original link is mentioned in the DZHQ message text
                     elif job.get("url") and job["url"] in text:
                         target_job = job
                         break
-            # 4. If only one active DZHQ job in progress in the group
-            if not target_job and is_group_msg:
-                active_dzhq = [j for j in engine.active_jobs.values() if j["state"] in (JobState.WAITING, JobState.PROCESSING) and j.get("dzhq_sent_id")]
-                if len(active_dzhq) == 1:
-                    target_job = active_dzhq[0]
+
+        # Check by In Link pattern if still not found
+        if not target_job:
+            m_in = _RX_IN.search(text)
+            if m_in:
+                in_url = clean_url(m_in.group(1))
+                with engine.jobs_lock:
+                    for job in engine.active_jobs.values():
+                        if job["state"] in (JobState.WAITING, JobState.PROCESSING):
+                            if is_same_url(job["url"], in_url) or clean_url(job["url"]) == in_url:
+                                target_job = job
+                                break
+
+        # If this is a group message replying to another message, but the replied message
+        # does not match any of our jobs, DZHQ was replying to someone else in the group.
+        # Ignore this message so we never return another user's bypassed link.
+        if is_group_msg and reply_to_id and not target_job:
+            _trace("DZHQ", f"Ignored group reply to unrelated message {reply_to_id}")
+            return
 
         if not target_job:
             return
@@ -1131,8 +1239,20 @@ def setup_userbot_handlers(client: TelegramClient):
                     _trace("DZHQ", f"Delete button click error: {e}")
             asyncio.create_task(_click_delete())
 
-        if status == "ok" and parsed[0].get("bypassed"):
-            bypassed_link = parsed[0]["bypassed"]
+        # Also check inline buttons for bypassed destination if text parsing had no link
+        bypassed_link = parsed[0].get("bypassed") if parsed and status == "ok" else None
+        if not bypassed_link and buttons:
+            for row in buttons:
+                for btn in row:
+                    b_url = getattr(btn, 'url', None)
+                    if b_url and is_valid_bypassed_destination(b_url, target_job["url"]):
+                        bypassed_link = b_url
+                        status = "ok"
+                        break
+                if bypassed_link:
+                    break
+
+        if status == "ok" and bypassed_link:
             if is_valid_bypassed_destination(bypassed_link, target_job["url"]):
                 target_job["final_url"] = bypassed_link
                 target_job["provider"] = "dzhq"
@@ -1861,32 +1981,54 @@ def get_registered_users() -> List[int]:
 #  REAL COLORED BUTTON BUILDERS (PRIMARY, SUCCESS, DANGER)
 # ══════════════════════════════════════════════════════════════
 def get_start_buttons(user_id: Optional[int] = None) -> InlineKeyboardMarkup:
-    """Start screen buttons with Owner Setup integration."""
-    rows = []
+    """
+    Start screen buttons:
+    - For owner: Session Paste button, and directly under it, Set Mini App Link button.
+    - For all users: Open Mini App button (Telegram WebApp).
+    - Help and About buttons.
+    """
+    rows: List[List[InlineKeyboardButton]] = []
     is_owner = bool(user_id and (not OWNER_ID or user_id == OWNER_ID))
+
     if is_owner:
-        if not engine.userbot_connected:
+        # 1. Owner Session Paste Button
+        rows.append([
+            InlineKeyboardButton(
+                text="📋 Paste StringSession",
+                callback_data="cmd_paste_session",
+                style=ButtonStyle.PRIMARY
+            )
+        ])
+        # 2. Directly underneath: Set Mini App Link (Only Owner can configure)
+        rows.append([
+            InlineKeyboardButton(
+                text="🌐 Set Mini App Link",
+                callback_data="cmd_set_miniapp",
+                style=ButtonStyle.SECONDARY
+            )
+        ])
+
+    # 3. Mini App Launch Button (Visible to everyone)
+    current_miniapp = (MINI_APP_URL or "").strip()
+    if current_miniapp:
+        if current_miniapp.startswith("https://"):
             rows.append([
                 InlineKeyboardButton(
-                    text="🔑 Login / Setup Userbot",
-                    callback_data="setup_wizard_start",
+                    text="🚀 Open Mini App",
+                    web_app={"url": current_miniapp},
                     style=ButtonStyle.SUCCESS
-                ),
-                InlineKeyboardButton(
-                    text="📋 Paste Session",
-                    callback_data="setup_paste_session",
-                    style=ButtonStyle.PRIMARY
                 )
             ])
-        else:
+        elif current_miniapp.startswith("http://"):
             rows.append([
                 InlineKeyboardButton(
-                    text="⚙️ Userbot Session Settings",
-                    callback_data="setup_wizard_start",
-                    style=ButtonStyle.PRIMARY
+                    text="🚀 Open Web App",
+                    url=current_miniapp,
+                    style=ButtonStyle.SUCCESS
                 )
             ])
 
+    # 4. Standard Help & About
     rows.append([
         InlineKeyboardButton(
             text="ℹ️ Help",
@@ -2077,48 +2219,8 @@ def extract_input_url(data: Union[Dict[str, Any], str]) -> Optional[str]:
     return None
 
 # ══════════════════════════════════════════════════════════════
-#  IN-TELEGRAM USERBOT SETUP & LOGIN WIZARD (OWNER ONLY)
+#  SESSION PERSISTENCE UTILITIES
 # ══════════════════════════════════════════════════════════════
-class SetupStep(str, Enum):
-    IDLE = "idle"
-    WAIT_API_CREDS = "wait_api_creds"
-    WAIT_PHONE = "wait_phone"
-    WAIT_CODE = "wait_code"
-    WAIT_2FA = "wait_2fa"
-    WAIT_PASTE_SESSION = "wait_paste_session"
-
-SETUP_STATE: Dict[int, Dict[str, Any]] = {}
-
-def get_setup_choice_buttons() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                text="🚀 Use Default API & Continue",
-                callback_data="setup_use_default_api",
-                style=ButtonStyle.SUCCESS
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🛠️ Custom API ID & HASH",
-                callback_data="setup_custom_api",
-                style=ButtonStyle.PRIMARY
-            ),
-            InlineKeyboardButton(
-                text="📋 Paste StringSession",
-                callback_data="setup_paste_session",
-                style=ButtonStyle.PRIMARY
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="❌ Cancel",
-                callback_data="setup_cancel",
-                style=ButtonStyle.DANGER
-            )
-        ]
-    ])
-
 def save_session_to_disk(session_str: str, api_id: Optional[int] = None, api_hash: Optional[str] = None):
     """Saves session string to session.txt and updates .env file."""
     try:
@@ -2163,83 +2265,14 @@ def save_session_to_disk(session_str: str, api_id: Optional[int] = None, api_has
     except Exception:
         pass
 
-async def start_owner_setup(chat_id: int, user_id: int):
-    """Initiates the owner login setup wizard."""
-    prev = SETUP_STATE.get(user_id, {})
-    if prev.get("client"):
-        try:
-            await prev["client"].disconnect()
-        except Exception:
-            pass
-    SETUP_STATE.pop(user_id, None)
-
-    welcome_setup = (
-        f"🚀 <b>{to_small_caps('providerbotz userbot login wizard')}</b>\n\n"
-        f"This wizard creates a safe StringSession with <b>Samsung Galaxy S24 Ultra (Android 14)</b> parameters.\n\n"
-        f"• 🔑 <b>Current API ID:</b> <code>{TELEGRAM_API_ID}</code>\n"
-        f"• 🛡️ <b>Current API HASH:</b> <code>{TELEGRAM_API_HASH[:6]}...{TELEGRAM_API_HASH[-4:]}</code>\n\n"
-        f"👉 <i>Choose an option below to proceed:</i>"
-    )
-    await bot_api.send_message(chat_id, welcome_setup, reply_markup=get_setup_choice_buttons())
-
-async def finish_interactive_login(chat_id: int, user_id: int, temp_client: TelegramClient, state_data: Dict[str, Any]):
-    """Finalizes Telethon login, saves session, and reconnects userbot."""
-    try:
-        session_str = temp_client.session.save()
-        me = await temp_client.get_me()
-        user_name = me.first_name or "Telegram User"
-        uname = f"@{me.username}" if getattr(me, 'username', None) else "None"
-        uid = me.id
-
-        api_id = state_data.get("api_id", TELEGRAM_API_ID)
-        api_hash = state_data.get("api_hash", TELEGRAM_API_HASH)
-
-        save_session_to_disk(session_str, api_id=api_id, api_hash=api_hash)
-
-        try:
-            await temp_client.disconnect()
-        except Exception:
-            pass
-
-        ok, info = await restart_userbot(session_str)
-
-        try:
-            if engine.userbot and engine.userbot.is_connected():
-                await engine.userbot.send_message(
-                    "me",
-                    f"🛡️ <b>[ProviderBotz Telethon Session]</b>\n\n"
-                    f"Device: <b>Samsung Galaxy S24 Ultra</b> (Android 14)\n\n"
-                    f"<code>{session_str}</code>\n\n"
-                    f"⚠️ <i>Keep this secret! Saved automatically to your bot.</i>",
-                    parse_mode="html"
-                )
-        except Exception:
-            pass
-
-        SETUP_STATE.pop(user_id, None)
-
-        engine_status = "🟢 Active & Online (Alex Bot + DZHQ)" if ok else f"⚠️ Reconnect notice: {info}"
-        success_msg = (
-            f"🎉 <b>{to_small_caps('session generated & connected!')}</b>\n\n"
-            f"• 👤 <b>Account:</b> {user_name} ({uname}) [<code>{uid}</code>]\n"
-            f"• 📱 <b>Device:</b> Samsung Galaxy S24 Ultra (Android 14)\n"
-            f"• 🤖 <b>Bypass Engine:</b> {engine_status}\n"
-            f"• 💾 <i>Saved to session.txt & .env automatically!</i>\n\n"
-            f"📋 <b>StringSession:</b>\n"
-            f"<code>{session_str}</code>\n\n"
-            f"✨ <i>All set! You can now send any shortlink to bypass.</i>"
-        )
-        await bot_api.send_message(chat_id, success_msg)
-    except Exception as e:
-        logger.error(f"Error finishing login: {e}")
-        await bot_api.send_message(chat_id, f"❌ <b>Login Error:</b> {e}")
-
 # ══════════════════════════════════════════════════════════════
 #  TELEGRAM BOT WORKER & LONG POLLING (ALEX BYPASS BOT STYLE)
 # ══════════════════════════════════════════════════════════════
 # Anti-flood & rate limit cooldown tracking
 _USER_MSG_TIMESTAMPS: Dict[int, float] = {}
 _USER_WARN_COOLDOWN: Dict[int, float] = {}
+# Owner Interactive State Tracking (for Session & Mini App URL inputs)
+OWNER_INPUT_STATE: Dict[int, str] = {}
 
 async def process_user_link(chat_id: int, user_id: int, target_url: str, reply_msg_id: Optional[int] = None, first_name: Optional[str] = None):
     """
@@ -2452,210 +2485,82 @@ async def run_bot_polling():
                     if user_id:
                         register_user(user_id)
 
-                    # 1. Handle Active Owner Setup Wizard (Interactive Session Generator)
+                    # Check Owner Status
                     is_owner = bool(user_id and (not OWNER_ID or user_id == OWNER_ID))
-                    if user_id in SETUP_STATE and is_owner:
-                        state_obj = SETUP_STATE[user_id]
-                        cur_step = state_obj.get("step")
 
-                        if text == "/cancel":
-                            if state_obj.get("client"):
-                                try:
-                                    await state_obj["client"].disconnect()
-                                except Exception:
-                                    pass
-                            SETUP_STATE.pop(user_id, None)
-                            await bot_api.send_message(chat_id, "❌ <b>Setup wizard cancelled.</b>", reply_to_message_id=msg.get("message_id"))
-                            continue
-
-                        if cur_step == SetupStep.WAIT_API_CREDS:
-                            parts = text.split()
-                            if len(parts) >= 2 and parts[0].isdigit() and len(parts[1]) >= 16:
-                                state_obj["api_id"] = int(parts[0])
-                                state_obj["api_hash"] = parts[1].strip()
-                                state_obj["step"] = SetupStep.WAIT_PHONE
-                                await bot_api.send_message(
-                                    chat_id,
-                                    f"✅ <b>API Credentials Saved!</b>\n\n"
-                                    f"• API ID: <code>{state_obj['api_id']}</code>\n"
-                                    f"• API HASH: <code>{state_obj['api_hash'][:6]}...{state_obj['api_hash'][-4:]}</code>\n\n"
-                                    f"📱 <b>Step 1/2: Enter Phone Number</b>\n"
-                                    f"Please reply with your Telegram phone number with international country code (e.g. <code>+88017XXXXXXXX</code> or <code>+9198XXXXXXXX</code>):",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            else:
-                                await bot_api.send_message(
-                                    chat_id,
-                                    "⚠️ <b>Invalid format!</b>\nPlease provide both API ID and API HASH separated by space:\nExample: <code>36805393 cfd5ff24d915c1691d88b0f3b51b96f5</code>\n<i>Or send /cancel to exit.</i>",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            continue
-
-                        elif cur_step == SetupStep.WAIT_PHONE:
-                            clean_phone = re.sub(r'[\s\-()]', '', text)
-                            if not clean_phone.startswith('+') or len(clean_phone) < 8 or not clean_phone[1:].isdigit():
-                                await bot_api.send_message(
-                                    chat_id,
-                                    "⚠️ <b>Invalid phone number!</b>\nPlease enter your phone number with '+' and country code.\nExample: <code>+8801712345678</code> or <code>+919812345678</code>:",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                                continue
-
-                            wait_box = await bot_api.send_message(
+                    # Cancel any active owner interactive state
+                    if is_owner and text == "/cancel":
+                        if user_id in OWNER_INPUT_STATE:
+                            OWNER_INPUT_STATE.pop(user_id, None)
+                            await bot_api.send_message(
                                 chat_id,
-                                f"⏳ <i>Connecting Telethon with Samsung Galaxy S24 Ultra parameters & requesting code for {clean_phone}...</i>",
+                                "❌ <b>Operation cancelled.</b>",
+                                reply_markup=get_start_buttons(user_id=user_id),
                                 reply_to_message_id=msg.get("message_id")
                             )
-                            wait_mid = wait_box.get("result", {}).get("message_id") if isinstance(wait_box, dict) else None
+                            continue
 
-                            api_id = state_obj.get("api_id", TELEGRAM_API_ID)
-                            api_hash = state_obj.get("api_hash", TELEGRAM_API_HASH)
-
-                            temp_client = TelegramClient(
-                                StringSession(),
-                                api_id,
-                                api_hash,
-                                device_model="Samsung Galaxy S24 Ultra",
-                                system_version="Android 14",
-                                app_version="10.14.5",
-                                lang_code="en",
-                                system_lang_code="en",
-                                timeout=25
+                    # Active Owner Input: Waiting for Mini App URL
+                    if is_owner and OWNER_INPUT_STATE.get(user_id) == "WAITING_MINIAPP":
+                        extracted_urls = extract_valid_urls_from_text(text)
+                        candidate_url = extracted_urls[0] if extracted_urls else text.strip()
+                        if candidate_url.startswith(("http://", "https://")):
+                            if candidate_url.startswith("http://") and not candidate_url.startswith("https://"):
+                                candidate_url = "https://" + candidate_url.split("://", 1)[1]
+                            MINI_APP_URL = candidate_url
+                            save_miniapp_url_to_disk(candidate_url)
+                            OWNER_INPUT_STATE.pop(user_id, None)
+                            confirm_txt = (
+                                f"✅ <b>{to_small_caps('mini app link updated!')}</b>\n\n"
+                                f"• 🌐 <b>Mini App URL:</b> <code>{MINI_APP_URL}</code>\n"
+                                f"• 🚀 <b>Start Menu:</b> 'Open Mini App' button updated for all users\n"
+                                f"• 💾 <i>Saved to miniapp.txt & active immediately!</i>"
                             )
-
-                            try:
-                                await temp_client.connect()
-                                code_req = await temp_client.send_code_request(clean_phone)
-                                state_obj["client"] = temp_client
-                                state_obj["phone"] = clean_phone
-                                state_obj["phone_code_hash"] = code_req.phone_code_hash
-                                state_obj["step"] = SetupStep.WAIT_CODE
-
-                                prompt_otp = (
-                                    f"📩 <b>Step 2/2: Verification Code (OTP)</b>\n\n"
-                                    f"Telegram sent an official verification code to your Telegram app (or SMS) for <code>{clean_phone}</code>.\n\n"
-                                    f"👉 <b>Reply with the code here.</b>\n"
-                                    f"<i>Tip: You can write it as <code>1 2 3 4 5</code> or <code>12345</code>.</i>\n\n"
-                                    f"<i>(Send /cancel to abort)</i>"
-                                )
-                                if wait_mid:
-                                    await bot_api.edit_message_text(chat_id, wait_mid, prompt_otp)
-                                else:
-                                    await bot_api.send_message(chat_id, prompt_otp)
-                            except Exception as req_err:
-                                err_s = str(req_err)
-                                if wait_mid:
-                                    await bot_api.edit_message_text(chat_id, wait_mid, f"❌ <b>Error requesting code:</b> {err_s}")
-                                else:
-                                    await bot_api.send_message(chat_id, f"❌ <b>Error requesting code:</b> {err_s}")
+                            await bot_api.send_message(
+                                chat_id,
+                                confirm_txt,
+                                reply_markup=get_start_buttons(user_id=user_id),
+                                reply_to_message_id=msg.get("message_id"),
+                                disable_web_page_preview=True
+                            )
+                            continue
+                        else:
+                            await bot_api.send_message(
+                                chat_id,
+                                "⚠️ <b>Invalid URL:</b> Please provide a valid link starting with <code>https://</code> (or send /cancel).",
+                                reply_to_message_id=msg.get("message_id")
+                            )
                             continue
 
-                        elif cur_step == SetupStep.WAIT_CODE:
-                            clean_otp = re.sub(r'[\s\-]', '', text)
-                            temp_client = state_obj.get("client")
-                            phone = state_obj.get("phone")
-                            phone_code_hash = state_obj.get("phone_code_hash")
+                    # Active Owner Input: Waiting for StringSession
+                    if is_owner and OWNER_INPUT_STATE.get(user_id) == "WAITING_SESSION":
+                        wait_m = await bot_api.send_message(chat_id, "🔄 <b>Connecting Userbot with pasted StringSession...</b>", reply_to_message_id=msg.get("message_id"))
+                        w_mid = wait_m.get("result", {}).get("message_id") if isinstance(wait_m, dict) else None
+                        ok, info = await restart_userbot(text.strip())
+                        if ok:
+                            save_session_to_disk(text.strip())
+                            OWNER_INPUT_STATE.pop(user_id, None)
+                            res_txt = (
+                                f"✅ <b>{to_small_caps('userbot connected successfully!')}</b>\n\n"
+                                f"• 👤 <b>Account:</b> {info}\n"
+                                f"• 📱 <b>Device:</b> Samsung Galaxy S24 Ultra (Android 14)\n"
+                                f"• 🤖 <b>Dual Engine:</b> 🟢 Active & Ready (Alex Bot + DZHQ Group)\n"
+                                f"• 💾 <i>Saved to session.txt & active in code!</i>"
+                            )
+                        else:
+                            res_txt = (
+                                f"❌ <b>{to_small_caps('session connection failed!')}</b>\n\n"
+                                f"⚠️ <i>{info}</i>\n\n"
+                                f"Please make sure the StringSession is active and not revoked. Send /cancel to exit."
+                            )
+                        if w_mid:
+                            await bot_api.edit_message_text(chat_id, w_mid, res_txt, reply_markup=get_start_buttons(user_id=user_id), disable_web_page_preview=True)
+                        else:
+                            await bot_api.send_message(chat_id, res_txt, reply_markup=get_start_buttons(user_id=user_id), disable_web_page_preview=True)
+                        continue
 
-                            if not temp_client:
-                                SETUP_STATE.pop(user_id, None)
-                                await bot_api.send_message(chat_id, "❌ Client state was lost. Please run /setup again.")
-                                continue
-
-                            try:
-                                await temp_client.sign_in(phone=phone, code=clean_otp, phone_code_hash=phone_code_hash)
-                                await finish_interactive_login(chat_id, user_id, temp_client, state_obj)
-                            except SessionPasswordNeededError:
-                                state_obj["step"] = SetupStep.WAIT_2FA
-                                await bot_api.send_message(
-                                    chat_id,
-                                    "🔐 <b>Two-Step Verification (2FA) Required!</b>\n\n"
-                                    "Your Telegram account has 2-step verification enabled.\n"
-                                    "Please reply with your 2FA cloud password:\n\n"
-                                    "<i>(Send /cancel to abort)</i>",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            except PhoneCodeInvalidError:
-                                await bot_api.send_message(
-                                    chat_id,
-                                    "❌ <b>Invalid code!</b> Please check the code sent in Telegram and reply again:",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            except PhoneCodeExpiredError:
-                                SETUP_STATE.pop(user_id, None)
-                                await bot_api.send_message(
-                                    chat_id,
-                                    "❌ <b>Code expired!</b> Please run /setup again to request a new code.",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            except Exception as sign_err:
-                                await bot_api.send_message(
-                                    chat_id,
-                                    f"❌ <b>Sign-in error:</b> {sign_err}",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            continue
-
-                        elif cur_step == SetupStep.WAIT_2FA:
-                            temp_client = state_obj.get("client")
-                            pwd = text.strip()
-                            if not temp_client:
-                                SETUP_STATE.pop(user_id, None)
-                                await bot_api.send_message(chat_id, "❌ Client state was lost. Please run /setup again.")
-                                continue
-
-                            try:
-                                await temp_client.sign_in(password=pwd)
-                                await finish_interactive_login(chat_id, user_id, temp_client, state_obj)
-                            except PasswordHashInvalidError:
-                                await bot_api.send_message(
-                                    chat_id,
-                                    "❌ <b>Incorrect 2FA password!</b> Please try again:\n<i>(Send /cancel to abort)</i>",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            except Exception as pwd_err:
-                                await bot_api.send_message(
-                                    chat_id,
-                                    f"❌ <b>2FA Error:</b> {pwd_err}",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            continue
-
-                        elif cur_step == SetupStep.WAIT_PASTE_SESSION:
-                            cand_sess = text.strip().replace('"', '').replace("'", "")
-                            if len(cand_sess) > 50:
-                                ok, info = await restart_userbot(cand_sess)
-                                if ok:
-                                    save_session_to_disk(cand_sess)
-                                    SETUP_STATE.pop(user_id, None)
-                                    await bot_api.send_message(
-                                        chat_id,
-                                        f"✅ <b>{to_small_caps('stringsession activated successfully!')}</b>\n\n"
-                                        f"• 👤 <b>Account:</b> {info}\n"
-                                        f"• 📱 <b>Device:</b> Samsung Galaxy S24 Ultra (Android 14)\n"
-                                        f"• 💾 <i>Saved to session.txt & active in code!</i>",
-                                        reply_to_message_id=msg.get("message_id")
-                                    )
-                                else:
-                                    await bot_api.send_message(
-                                        chat_id,
-                                        f"❌ <b>Connection failed:</b> {info}\nPlease provide a valid StringSession:",
-                                        reply_to_message_id=msg.get("message_id")
-                                    )
-                            else:
-                                await bot_api.send_message(
-                                    chat_id,
-                                    "⚠️ String is too short to be a valid StringSession. Please paste your full session string or send /cancel.",
-                                    reply_to_message_id=msg.get("message_id")
-                                )
-                            continue
-
-                    # 2. Check Owner Commands: /setup, /login, /setapi
-                    if text in ("/setup", "/login"):
-                        if is_owner:
-                            await start_owner_setup(chat_id, user_id)
-                            continue
-
-                    elif text.startswith("/setapi"):
+                    # 1. API Credentials command: /setapi <id> <hash>
+                    if text.startswith("/setapi"):
                         if is_owner:
                             parts = text.split()
                             if len(parts) >= 3 and parts[1].isdigit():
@@ -2677,6 +2582,53 @@ async def run_bot_polling():
                                     reply_to_message_id=msg.get("message_id")
                                 )
                             continue
+
+                    # 2. Mini App Link command: /setminiapp or /miniapp (Owner only)
+                    if text.startswith(("/setminiapp", "/miniapp")):
+                        if not is_owner:
+                            denied_msg = (
+                                f"⛔ <b>{to_small_caps('access denied!')}</b>\n\n"
+                                f"<i>{to_small_caps('this command is strictly restricted to the bot owner.')}</i>"
+                            )
+                            await bot_api.send_message(chat_id, denied_msg, reply_to_message_id=msg.get("message_id"), disable_web_page_preview=True)
+                            continue
+
+                        parts = text.split(None, 1)
+                        new_url = ""
+                        reply_to = msg.get("reply_to_message")
+                        if reply_to:
+                            new_url = (reply_to.get("text") or reply_to.get("caption") or "").strip()
+                        if not new_url and len(parts) > 1:
+                            new_url = parts[1].strip()
+
+                        if not new_url:
+                            miniapp_help = (
+                                f"🌐 <b>{to_small_caps('mini app link configuration')}</b>\n\n"
+                                f"• <b>Current URL:</b> <code>{MINI_APP_URL or 'None'}</code>\n\n"
+                                f"• <b>Usage 1:</b> <code>/setminiapp &lt;https://...&gt;</code>\n"
+                                f"• <b>Usage 2:</b> Reply to any link with <code>/setminiapp</code>\n\n"
+                                f"<i>This sets the Telegram Mini App link displayed directly under the session button for the owner, and active for all users!</i>"
+                            )
+                            await bot_api.send_message(chat_id, miniapp_help, reply_to_message_id=msg.get("message_id"), disable_web_page_preview=True)
+                            continue
+
+                        extracted = extract_valid_urls_from_text(new_url)
+                        final_mini_url = extracted[0] if extracted else new_url
+                        if not final_mini_url.startswith(("http://", "https://")):
+                            final_mini_url = "https://" + final_mini_url
+
+                        MINI_APP_URL = final_mini_url
+                        save_miniapp_url_to_disk(final_mini_url)
+                        OWNER_INPUT_STATE.pop(user_id, None)
+
+                        confirm_txt = (
+                            f"✅ <b>{to_small_caps('mini app link updated!')}</b>\n\n"
+                            f"• 🌐 <b>Mini App URL:</b> <code>{MINI_APP_URL}</code>\n"
+                            f"• 🚀 <b>Start Menu:</b> 'Open Mini App' button updated for all users\n"
+                            f"• 💾 <i>Saved to miniapp.txt & active immediately!</i>"
+                        )
+                        await bot_api.send_message(chat_id, confirm_txt, reply_markup=get_start_buttons(user_id=user_id), reply_to_message_id=msg.get("message_id"), disable_web_page_preview=True)
+                        continue
 
                     # 3. Direct Session String Paste Auto-Detection for Owner
                     if is_owner and len(text) > 100 and text.startswith("1") and ("=" in text or "_" in text) and not text.startswith("http"):
@@ -2971,61 +2923,7 @@ async def run_bot_polling():
 
                     await bot_api.answer_callback_query(cq_id)
 
-                    if cq_data == "setup_wizard_start":
-                        await start_owner_setup(chat_id, user_id)
-
-                    elif cq_data == "setup_use_default_api":
-                        SETUP_STATE[user_id] = {
-                            "step": SetupStep.WAIT_PHONE,
-                            "api_id": TELEGRAM_API_ID,
-                            "api_hash": TELEGRAM_API_HASH,
-                            "start_time": time.time()
-                        }
-                        setup_p_msg = (
-                            f"📱 <b>{to_small_caps('step 1/2: phone number')}</b>\n\n"
-                            f"• API ID: <code>{TELEGRAM_API_ID}</code> (Default)\n"
-                            f"• Device: <b>Samsung Galaxy S24 Ultra</b>\n\n"
-                            f"Please reply with your Telegram phone number with international country code.\n"
-                            f"Example: <code>+88017XXXXXXXX</code> or <code>+9198XXXXXXXX</code>\n\n"
-                            f"<i>(Send /cancel to abort)</i>"
-                        )
-                        await bot_api.edit_message_text(chat_id, msg_id, setup_p_msg)
-
-                    elif cq_data == "setup_custom_api":
-                        SETUP_STATE[user_id] = {
-                            "step": SetupStep.WAIT_API_CREDS,
-                            "start_time": time.time()
-                        }
-                        setup_c_msg = (
-                            f"🛠️ <b>{to_small_caps('custom api credentials')}</b>\n\n"
-                            f"Please reply with your API ID and API HASH separated by a space.\n\n"
-                            f"Example:\n<code>36805393 cfd5ff24d915c1691d88b0f3b51b96f5</code>\n\n"
-                            f"<i>(Send /cancel to abort)</i>"
-                        )
-                        await bot_api.edit_message_text(chat_id, msg_id, setup_c_msg)
-
-                    elif cq_data == "setup_paste_session":
-                        SETUP_STATE[user_id] = {
-                            "step": SetupStep.WAIT_PASTE_SESSION,
-                            "start_time": time.time()
-                        }
-                        setup_s_msg = (
-                            f"📋 <b>{to_small_caps('paste stringsession')}</b>\n\n"
-                            f"Please reply or paste your full Telethon StringSession string here.\n\n"
-                            f"<i>(Send /cancel to abort)</i>"
-                        )
-                        await bot_api.edit_message_text(chat_id, msg_id, setup_s_msg)
-
-                    elif cq_data == "setup_cancel":
-                        prev = SETUP_STATE.pop(user_id, None)
-                        if prev and prev.get("client"):
-                            try:
-                                await prev["client"].disconnect()
-                            except Exception:
-                                pass
-                        await bot_api.edit_message_text(chat_id, msg_id, "❌ <b>Setup wizard cancelled.</b>")
-
-                    elif cq_data == "cmd_fsub_check":
+                    if cq_data == "cmd_fsub_check":
                         is_member = await check_user_fsub(user_id)
                         if is_member:
                             await bot_api.answer_callback_query(cq_id, text="✅ Membership verified! Welcome.")
@@ -3081,6 +2979,39 @@ async def run_bot_polling():
                             f"🚀 <i>{to_small_caps('crafted for speed and reliability')}</i>"
                         )
                         await bot_api.edit_message_text(chat_id, msg_id, about_text, reply_markup=get_about_buttons(), disable_web_page_preview=True)
+
+                    elif cq_data == "cmd_paste_session":
+                        is_owner = bool(user_id and (not OWNER_ID or user_id == OWNER_ID))
+                        if not is_owner:
+                            await bot_api.answer_callback_query(cq_id, text="⛔ Restricted to bot owner.", show_alert=True)
+                            continue
+                        OWNER_INPUT_STATE[user_id] = "WAITING_SESSION"
+                        prompt_txt = (
+                            f"📋 <b>{to_small_caps('paste stringsession')}</b> (Owner Only)\n\n"
+                            f"• <b>Current Session:</b> <code>{TELEGRAM_SESSION[:18]}...</code> "
+                            f"({'🟢 Connected' if (engine.client and engine.client.is_connected()) else '🔴 Disconnected'})\n\n"
+                            f"<i>Please send your Telethon StringSession directly in this chat, or use command:</i>\n"
+                            f"<code>/setsession &lt;string_session&gt;</code>\n\n"
+                            f"• <b>Note:</b> Connects with Samsung Galaxy S24 Ultra and saves to session.txt!\n"
+                            f"• <i>Send /cancel to return to main menu.</i>"
+                        )
+                        await bot_api.send_message(chat_id, prompt_txt, reply_to_message_id=msg_id, disable_web_page_preview=True)
+
+                    elif cq_data == "cmd_set_miniapp":
+                        is_owner = bool(user_id and (not OWNER_ID or user_id == OWNER_ID))
+                        if not is_owner:
+                            await bot_api.answer_callback_query(cq_id, text="⛔ Restricted to bot owner.", show_alert=True)
+                            continue
+                        OWNER_INPUT_STATE[user_id] = "WAITING_MINIAPP"
+                        prompt_txt = (
+                            f"🌐 <b>{to_small_caps('configure mini app link')}</b> (Owner Only)\n\n"
+                            f"• <b>Current Mini App URL:</b> <code>{MINI_APP_URL or 'Not configured'}</code>\n\n"
+                            f"<i>Please send your Mini App / WebApp URL directly in this chat, or use command:</i>\n"
+                            f"<code>/setminiapp &lt;https://your-domain.run.app&gt;</code>\n\n"
+                            f"• <b>Telegram requirement:</b> Must be an HTTPS link (e.g. <code>https://...</code>)\n"
+                            f"• <i>Send /cancel to return to main menu.</i>"
+                        )
+                        await bot_api.send_message(chat_id, prompt_txt, reply_to_message_id=msg_id, disable_web_page_preview=True)
 
                     elif cq_data == "cmd_close":
                         await bot_api.delete_message(chat_id, msg_id)
