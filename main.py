@@ -136,7 +136,7 @@ OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
 # Public Bot Credentials
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAHgbpb6q40Yvjw-SeZVyZicW2BXk-1kS0E").strip()
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAFhcBvuAI9Z-kArVGrju3bompsd8qg141g").strip()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
 
 # Owner ID Priority: MANUAL_OWNER_ID -> OWNER_ID (env var)
