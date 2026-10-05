@@ -127,6 +127,10 @@ MANUAL_TELEGRAM_SESSION: str = ""
 # Set your Telegram Mini App / WebApp URL here (or configure dynamically via bot using /setminiapp)
 MANUAL_MINI_APP_URL: str = ""
 
+# 🤖 8. MANUAL BOT TOKEN:
+# Paste your Bot Token from @BotFather here if not using .env or token.txt
+MANUAL_BOT_TOKEN: str = ""
+
 # ══════════════════════════════════════════════════════════════
 #  SYSTEM CONFIGURATION & CREDENTIALS
 # ══════════════════════════════════════════════════════════════
@@ -135,8 +139,69 @@ BRAND_NAME = "ProviderBotz"
 OFFICIAL_CHANNEL = "https://t.me/ProviderBotz"
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 
-# Public Bot Credentials
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8678804822:AAFhcBvuAI9Z-kArVGrju3bompsd8qg141g").strip()
+def load_saved_bot_token() -> str:
+    """Load persisted Bot Token from token.txt or .env"""
+    _txt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.txt")
+    if os.path.exists(_txt_path):
+        try:
+            with open(_txt_path, "r", encoding="utf-8") as f:
+                c = f.read().strip()
+                if c:
+                    return c
+        except Exception:
+            pass
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(_env_path):
+        try:
+            with open(_env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("BOT_TOKEN="):
+                        val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        if val:
+                            return val
+        except Exception:
+            pass
+    return ""
+
+def save_bot_token_to_disk(token: str):
+    """Persist Bot Token to token.txt and update .env if present."""
+    clean_t = token.strip()
+    _txt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.txt")
+    try:
+        with open(_txt_path, "w", encoding="utf-8") as f:
+            f.write(clean_t)
+    except Exception as e:
+        logger.warning(f"Failed to write token.txt: {e}")
+
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        lines = []
+        if os.path.exists(_env_path):
+            with open(_env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        found = False
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith("BOT_TOKEN="):
+                new_lines.append(f'BOT_TOKEN="{clean_t}"\n')
+                found = True
+            else:
+                new_lines.append(line)
+        if not found:
+            new_lines.append(f'\nBOT_TOKEN="{clean_t}"\n')
+        with open(_env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        logger.warning(f"Failed to update .env BOT_TOKEN: {e}")
+
+# Public Bot Credentials: Priority MANUAL_BOT_TOKEN -> token.txt -> env
+_saved_bot_token = load_saved_bot_token()
+BOT_TOKEN = (
+    (MANUAL_BOT_TOKEN or "").strip()
+    or _saved_bot_token
+    or os.environ.get("BOT_TOKEN", "").strip()
+)
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
 
 # Owner ID Priority: MANUAL_OWNER_ID -> OWNER_ID (env var)
@@ -245,8 +310,11 @@ MINI_APP_URL: str = (
     or "https://ais-dev-kmurw32gicz624bvfb4vyp-867421542653.asia-southeast1.run.app"
 )
 
-# Web Server & Port Configuration (Provides lightweight healthcheck for cloud platforms)
-PORT = int(os.environ.get("PORT", "5000"))
+# Web Server & Port Configuration (Runs on non-conflicting port 5000, Vite proxies to it)
+FLASK_PORT = int(os.environ.get("FLASK_PORT", "5000"))
+if FLASK_PORT in (8080, 3000, 8000):
+    FLASK_PORT = 5000
+PORT = FLASK_PORT
 SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "ProviderPro").strip()
 
@@ -297,12 +365,10 @@ class InlineKeyboardButton:
         d: Dict[str, Any] = {"text": self.text}
         if self.url:
             d["url"] = self.url
-        if self.callback_data:
-            d["callback_data"] = self.callback_data
-        if self.web_app:
+        elif self.web_app:
             d["web_app"] = self.web_app
-        if self.style:
-            d["style"] = self.style
+        elif self.callback_data:
+            d["callback_data"] = self.callback_data
         return d
 
 class InlineKeyboardMarkup:
@@ -1212,9 +1278,33 @@ def setup_userbot_handlers(client: TelegramClient):
 
         target_job["dzhq_last_msg_id"] = msg.id
 
-        parsed = parse_dzhq_message(text, msg.entities or [], target_job["url"])
-        status = parsed[0].get("status") if parsed else "empty"
-        _trace("DZHQ", f"Job {target_job['id']} update: status={status}")
+        target_link_for_dzhq = replied_link or target_job["url"]
+        parsed = parse_dzhq_message(text, msg.entities or [], target_link_for_dzhq)
+
+        # Match the exact block corresponding to the replied link or target link
+        bypassed_link = None
+        status = "empty"
+        if parsed:
+            for item in parsed:
+                if item.get("status") == "ok" and item.get("bypassed"):
+                    orig = item.get("original")
+                    if orig:
+                        if (is_same_url(orig, target_job["url"]) or clean_url(orig) == clean_url(target_job["url"]) or
+                            (replied_link and (is_same_url(orig, replied_link) or clean_url(orig) == clean_url(replied_link)))):
+                            bypassed_link = item["bypassed"]
+                            status = "ok"
+                            break
+                    else:
+                        bypassed_link = item["bypassed"]
+                        status = "ok"
+                        break
+            if not bypassed_link and parsed[0].get("status") == "ok":
+                bypassed_link = parsed[0].get("bypassed")
+                status = "ok"
+            elif not bypassed_link:
+                status = parsed[0].get("status", "empty")
+
+        _trace("DZHQ", f"Job {target_job['id']} update for {target_link_for_dzhq}: status={status}, link={bypassed_link}")
 
         target_job["last_activity_ts"] = time.time()
 
@@ -1240,7 +1330,6 @@ def setup_userbot_handlers(client: TelegramClient):
             asyncio.create_task(_click_delete())
 
         # Also check inline buttons for bypassed destination if text parsing had no link
-        bypassed_link = parsed[0].get("bypassed") if parsed and status == "ok" else None
         if not bypassed_link and buttons:
             for row in buttons:
                 for btn in row:
@@ -1744,9 +1833,9 @@ class TelegramBotAPI:
         reply_markup: Optional[InlineKeyboardMarkup] = None,
         reply_to_message_id: Optional[int] = None,
         parse_mode: str = "HTML",
-        quote: bool = True
+        quote: bool = False
     ) -> Dict[str, Any]:
-        """Send a photo with caption and native colored buttons."""
+        """Send a photo with caption and buttons, with automatic fallback to text if photo fails."""
         cap_text = wrap_quote(caption) if (quote and parse_mode == "HTML" and caption) else (caption or "")
         payload: Dict[str, Any] = {
             "chat_id": chat_id,
@@ -1757,25 +1846,40 @@ class TelegramBotAPI:
         if reply_markup:
             payload["reply_markup"] = reply_markup.to_dict()
         if reply_to_message_id:
-            payload["reply_to_message_id"] = reply_to_message_id
             payload["reply_parameters"] = {
                 "message_id": reply_to_message_id,
                 "allow_sending_without_reply": True
             }
+
         res = await self.call("sendPhoto", payload)
         if not res.get("ok"):
             err_desc = res.get("description", "")
-            # Fallback if reply message not found
-            if "reply" in err_desc.lower() and ("reply_parameters" in payload or "reply_to_message_id" in payload):
-                no_reply_payload = dict(payload)
-                no_reply_payload.pop("reply_parameters", None)
-                no_reply_payload.pop("reply_to_message_id", None)
-                res = await self.call("sendPhoto", no_reply_payload)
-            # Fallback if reply_markup styles not accepted
-            elif "reply_markup" in payload:
-                fallback_payload = dict(payload)
-                fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
-                res = await self.call("sendPhoto", fallback_payload)
+            # 1. Fallback if reply message not found
+            if ("reply" in err_desc.lower() or "message_id" in err_desc.lower()) and "reply_parameters" in payload:
+                payload.pop("reply_parameters", None)
+                payload.pop("reply_to_message_id", None)
+                res = await self.call("sendPhoto", payload)
+
+            # 2. Fallback if caption HTML entity parsing fails
+            if not res.get("ok"):
+                err_desc = res.get("description", "")
+                if "can't parse entities" in err_desc or "entity" in err_desc.lower():
+                    plain_cap = re.sub(r'<[^>]+>', '', caption or "")
+                    payload["caption"] = plain_cap
+                    payload.pop("parse_mode", None)
+                    res = await self.call("sendPhoto", payload)
+
+            # 3. Fallback if photo itself cannot be loaded by Telegram: send as text message
+            if not res.get("ok"):
+                logger.warning(f"sendPhoto failed ({err_desc}), falling back to sendMessage")
+                return await self.send_message(
+                    chat_id=chat_id,
+                    text=caption or "",
+                    reply_markup=reply_markup,
+                    reply_to_message_id=reply_to_message_id,
+                    parse_mode=parse_mode,
+                    quote=quote
+                )
         return res
 
     async def edit_message_caption(
@@ -1785,7 +1889,7 @@ class TelegramBotAPI:
         caption: str,
         reply_markup: Optional[InlineKeyboardMarkup] = None,
         parse_mode: str = "HTML",
-        quote: bool = True
+        quote: bool = False
     ) -> Dict[str, Any]:
         """Edit caption of an existing photo/media message."""
         cap_text = wrap_quote(caption) if (quote and parse_mode == "HTML" and caption) else caption
@@ -1800,10 +1904,14 @@ class TelegramBotAPI:
         res = await self.call("editMessageCaption", payload)
         if not res.get("ok"):
             err_desc = res.get("description", "")
-            if "reply_markup" in payload:
-                fallback_payload = dict(payload)
-                fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
-                res = await self.call("editMessageCaption", fallback_payload)
+            if "can't parse entities" in err_desc or "entity" in err_desc.lower():
+                plain_cap = re.sub(r'<[^>]+>', '', caption or "")
+                payload["caption"] = plain_cap
+                payload.pop("parse_mode", None)
+                res = await self.call("editMessageCaption", payload)
+            if not res.get("ok") and "reply_markup" in payload:
+                payload.pop("reply_markup", None)
+                res = await self.call("editMessageCaption", payload)
         return res
 
     async def send_message(
@@ -1815,7 +1923,7 @@ class TelegramBotAPI:
         parse_mode: str = "HTML",
         disable_web_page_preview: bool = False,
         link_preview_options: Optional[Dict[str, Any]] = None,
-        quote: bool = True
+        quote: bool = False
     ) -> Dict[str, Any]:
         msg_text = wrap_quote(text) if (quote and parse_mode == "HTML" and text) else text
         payload: Dict[str, Any] = {
@@ -1831,30 +1939,33 @@ class TelegramBotAPI:
         if reply_markup:
             payload["reply_markup"] = reply_markup.to_dict()
         if reply_to_message_id:
-            payload["reply_to_message_id"] = reply_to_message_id
             payload["reply_parameters"] = {
                 "message_id": reply_to_message_id,
                 "allow_sending_without_reply": True
             }
+
         res = await self.call("sendMessage", payload)
         if not res.get("ok"):
             err_desc = res.get("description", "")
-            # 1. Fallback if quote or HTML entity parsing error occurs
-            if "can't parse entities" in err_desc or "entity" in err_desc.lower():
-                clean_payload = dict(payload)
-                clean_payload["text"] = text.replace("<blockquote>", "").replace("</blockquote>", "")
-                res = await self.call("sendMessage", clean_payload)
-            # 2. Fallback if replied message not found
-            elif "reply" in err_desc.lower() and ("reply_parameters" in payload or "reply_to_message_id" in payload):
-                no_reply_payload = dict(payload)
-                no_reply_payload.pop("reply_parameters", None)
-                no_reply_payload.pop("reply_to_message_id", None)
-                res = await self.call("sendMessage", no_reply_payload)
-            # 3. Fallback if server does not accept style field on buttons
-            elif "reply_markup" in payload:
-                fallback_payload = dict(payload)
-                fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
-                res = await self.call("sendMessage", fallback_payload)
+            # 1. Fallback if reply message not found
+            if ("reply" in err_desc.lower() or "message_id" in err_desc.lower()) and "reply_parameters" in payload:
+                payload.pop("reply_parameters", None)
+                payload.pop("reply_to_message_id", None)
+                res = await self.call("sendMessage", payload)
+
+            # 2. Fallback if HTML entity parsing error occurs
+            if not res.get("ok"):
+                err_desc = res.get("description", "")
+                if "can't parse entities" in err_desc or "entity" in err_desc.lower():
+                    plain_text = re.sub(r'<[^>]+>', '', text)
+                    payload["text"] = plain_text
+                    payload.pop("parse_mode", None)
+                    res = await self.call("sendMessage", payload)
+
+            # 3. Fallback if reply_markup failed
+            if not res.get("ok") and "reply_markup" in payload:
+                payload.pop("reply_markup", None)
+                res = await self.call("sendMessage", payload)
         return res
 
     async def edit_message_text(
@@ -1866,7 +1977,7 @@ class TelegramBotAPI:
         parse_mode: str = "HTML",
         disable_web_page_preview: bool = False,
         link_preview_options: Optional[Dict[str, Any]] = None,
-        quote: bool = True
+        quote: bool = False
     ) -> Dict[str, Any]:
         msg_text = wrap_quote(text) if (quote and parse_mode == "HTML" and text) else text
         payload: Dict[str, Any] = {
@@ -1882,17 +1993,18 @@ class TelegramBotAPI:
             payload["link_preview_options"] = link_preview_options
         if reply_markup:
             payload["reply_markup"] = reply_markup.to_dict()
+
         res = await self.call("editMessageText", payload)
         if not res.get("ok"):
             err_desc = res.get("description", "")
             if "can't parse entities" in err_desc or "entity" in err_desc.lower():
-                clean_payload = dict(payload)
-                clean_payload["text"] = text.replace("<blockquote>", "").replace("</blockquote>", "")
-                res = await self.call("editMessageText", clean_payload)
-            elif "reply_markup" in payload:
-                fallback_payload = dict(payload)
-                fallback_payload["reply_markup"] = self._strip_styles(payload["reply_markup"])
-                res = await self.call("editMessageText", fallback_payload)
+                plain_text = re.sub(r'<[^>]+>', '', text)
+                payload["text"] = plain_text
+                payload.pop("parse_mode", None)
+                res = await self.call("editMessageText", payload)
+            if not res.get("ok") and "reply_markup" in payload:
+                payload.pop("reply_markup", None)
+                res = await self.call("editMessageText", payload)
         return res
 
     @staticmethod
@@ -2442,29 +2554,52 @@ async def check_user_fsub(user_id: int) -> bool:
 
 async def run_bot_polling():
     """Continuous async long-polling loop for the public bot."""
-    global bot_api
-    if not BOT_TOKEN:
-        logger.warning("⚠️ BOT_TOKEN is missing. Public bot polling will not run.")
-        return
+    global bot_api, BOT_USERNAME, TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION, BOT_TOKEN
 
-    bot_api = TelegramBotAPI(BOT_TOKEN)
-    me = await bot_api.get_me()
-    if not me.get("ok"):
-        logger.error(f"❌ Failed to connect to Telegram Bot API with BOT_TOKEN: {me.get('description')}")
-        return
-
-    global BOT_USERNAME, TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION
-    bot_info = me.get("result", {})
-    BOT_USERNAME = bot_info.get("username", BOT_USERNAME)
-    logger.info(f"✅ Public Bot API online: @{BOT_USERNAME} (Bot API 9.4 Colored Buttons Enabled)")
-
-    offset = 0
     while True:
+        fresh_token = (
+            (MANUAL_BOT_TOKEN or "").strip()
+            or load_saved_bot_token()
+            or os.environ.get("BOT_TOKEN", "").strip()
+            or (BOT_TOKEN or "").strip()
+        )
+        if not fresh_token:
+            logger.info("ℹ️ Telegram Bot Token is waiting to be configured (in .env, token.txt, or via Mini App). Checking again in 10s...")
+            await asyncio.sleep(10)
+            continue
+
+        BOT_TOKEN = fresh_token
         try:
-            updates = await bot_api.call("getUpdates", {"offset": offset, "timeout": 25})
-            if not updates.get("ok"):
-                await asyncio.sleep(2)
+            bot_api = TelegramBotAPI(BOT_TOKEN)
+            me = await bot_api.get_me()
+            if not me.get("ok"):
+                logger.warning(f"⚠️ Telegram Bot API check returned: {me.get('description', 'Unauthorized')}. Waiting for valid BOT_TOKEN or retrying in 12s...")
+                await asyncio.sleep(12)
                 continue
+
+            bot_info = me.get("result", {})
+            BOT_USERNAME = bot_info.get("username", BOT_USERNAME)
+            logger.info(f"✅ Public Bot API online: @{BOT_USERNAME} (Bot API 9.4 Colored Buttons Enabled)")
+
+            offset = 0
+            while True:
+                # Check if token changed dynamically via web UI or file
+                token_check = (MANUAL_BOT_TOKEN or "").strip() or load_saved_bot_token() or os.environ.get("BOT_TOKEN", "").strip()
+                if token_check and token_check != BOT_TOKEN:
+                    logger.info("🔄 Bot Token updated dynamically. Reconnecting Bot API...")
+                    BOT_TOKEN = token_check
+                    break
+
+                try:
+                    updates = await bot_api.call("getUpdates", {"offset": offset, "timeout": 25})
+                except Exception as up_err:
+                    _trace("POLLING", f"getUpdates network error: {up_err}")
+                    await asyncio.sleep(2)
+                    continue
+
+                if not updates.get("ok"):
+                    await asyncio.sleep(2)
+                    continue
 
             for u in updates.get("result", []):
                 offset = max(offset, u["update_id"] + 1)
@@ -3025,8 +3160,8 @@ async def run_bot_polling():
         except asyncio.CancelledError:
             break
         except Exception as e:
-            _trace("POLLING", f"Polling error: {e}")
-            await asyncio.sleep(2)
+            logger.error(f"⚠️ Telegram Bot API error: {e}. Reconnecting in 5s...")
+            await asyncio.sleep(5)
 
 # ══════════════════════════════════════════════════════════════
 #  FLASK SERVER & API
@@ -3056,6 +3191,16 @@ class PrefixMiddleware:
 app.wsgi_app = PrefixMiddleware(app.wsgi_app)
 
 GLOBAL_ASYNC_LOOP: Optional[asyncio.AbstractEventLoop] = None
+_CURRENT_PUBLIC_URL: str = ""
+
+def get_auto_public_url() -> str:
+    global _CURRENT_PUBLIC_URL
+    return (
+        _CURRENT_PUBLIC_URL
+        or MINI_APP_URL
+        or os.environ.get("PUBLIC_URL", "").strip()
+        or f"http://localhost:{PORT}"
+    )
 
 @app.before_request
 def auto_detect_host_url():
@@ -3157,6 +3302,74 @@ def route_admin_status():
             "dzhq": {"configured": bool(DZHQ_BOT), "group": DZHQ_GROUP, "entity_resolved": bool(engine.dzhq_group_entity)},
             "alex_dm": {"configured": bool(ALEX_BOT)}
         }
+    }), 200
+
+@app.route("/api/config", methods=["GET", "POST", "OPTIONS"])
+def route_api_config():
+    global BOT_TOKEN, BOT_USERNAME, TELEGRAM_SESSION, MINI_APP_URL, OWNER_ID, bot_api
+    if request.method == "OPTIONS":
+        return "", 204
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        # 1. Update BOT_TOKEN
+        new_token = (data.get("bot_token") or "").strip()
+        token_updated = False
+        if new_token:
+            save_bot_token_to_disk(new_token)
+            BOT_TOKEN = new_token
+            token_updated = True
+
+        # 2. Update StringSession
+        new_sess = (data.get("telegram_session") or "").strip()
+        sess_ok = None
+        sess_msg = None
+        if new_sess:
+            save_session_to_disk(new_sess)
+            TELEGRAM_SESSION = new_sess
+            if GLOBAL_ASYNC_LOOP:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(restart_userbot(new_sess), GLOBAL_ASYNC_LOOP)
+                    sess_ok, sess_msg = future.result(timeout=25)
+                except Exception as ex:
+                    sess_ok = False
+                    sess_msg = str(ex)
+
+        # 3. Update MINI_APP_URL
+        new_miniapp = (data.get("miniapp_url") or "").strip()
+        if new_miniapp:
+            if not new_miniapp.startswith(("http://", "https://")):
+                new_miniapp = "https://" + new_miniapp
+            save_miniapp_url_to_disk(new_miniapp)
+            MINI_APP_URL = new_miniapp
+
+        # 4. Update OWNER_ID
+        new_owner = data.get("owner_id")
+        if new_owner and str(new_owner).isdigit():
+            OWNER_ID = int(new_owner)
+
+        return jsonify({
+            "status": True,
+            "message": "Configuration updated successfully",
+            "bot_token_updated": token_updated,
+            "session_result": {"ok": sess_ok, "msg": sess_msg} if sess_ok is not None else None,
+            "miniapp_url": MINI_APP_URL,
+            "bot_username": BOT_USERNAME,
+            "userbot_connected": engine.userbot_connected,
+            "bot_api_online": bool(bot_api)
+        }), 200
+
+    # GET request
+    return jsonify({
+        "status": True,
+        "bot_username": BOT_USERNAME,
+        "has_bot_token": bool(BOT_TOKEN),
+        "bot_api_online": bool(bot_api),
+        "has_session": bool(TELEGRAM_SESSION),
+        "userbot_connected": engine.userbot_connected,
+        "miniapp_url": MINI_APP_URL,
+        "owner_id": OWNER_ID,
+        "dzhq_group": DZHQ_GROUP
     }), 200
 
 async def restart_userbot(new_session: str) -> Tuple[bool, str]:
