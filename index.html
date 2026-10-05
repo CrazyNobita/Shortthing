@@ -624,6 +624,29 @@
       color: #a5b4fc;
     }
 
+    /* 👑 Owner Control Card */
+    .owner-card {
+      background: linear-gradient(145deg, rgba(28, 14, 20, 0.9), rgba(16, 8, 12, 0.85));
+      border: 1px solid rgba(239, 68, 68, 0.38);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 12px 30px rgba(220, 38, 38, 0.16), 0 0 1px rgba(239, 68, 68, 0.4);
+      margin-bottom: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .owner-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #ef4444, #dc2626, transparent);
+    }
+
     /* Recent Sessions */
     .history-card {
       background: var(--bg-card);
@@ -935,6 +958,48 @@
       </div>
     </main>
 
+    <!-- 👑 Owner Management Panel (Exclusive to Bot Owner) -->
+    <section id="ownerControlSection" class="owner-card" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size: 1.15rem;">👑</span>
+          <div>
+            <div style="font-weight: 800; font-size: 0.85rem; letter-spacing: 0.05em; color: #fee2e2;">OWNER CONTROLS</div>
+            <div style="font-size: 0.7rem; color: var(--text-dim);">Configure engine, sessions & Mini App</div>
+          </div>
+        </div>
+        <span id="ownerEngineBadge" class="status-badge" style="font-size: 0.68rem; padding: 4px 10px; border-radius: 999px; background: rgba(239,68,68,0.18); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5;">Checking...</span>
+      </div>
+
+      <!-- 1. Owner Session Paste Button -->
+      <div style="margin-bottom: 8px;">
+        <button id="openSessionModalBtn" class="btn btn-primary" style="width: 100%; padding: 11px; font-size: 0.84rem; display: flex; align-items: center; justify-content: center; gap: 8px;">
+          <span>📋</span>
+          <span style="font-weight: 700;">Paste StringSession</span>
+        </button>
+      </div>
+
+      <!-- 2. DIRECTLY UNDER SESSION PASTE: Set Mini App Link Button (Owner Only) -->
+      <div style="margin-bottom: 8px;">
+        <button id="openMiniAppModalBtn" class="btn btn-secondary" style="width: 100%; padding: 11px; font-size: 0.84rem; display: flex; align-items: center; justify-content: center; gap: 8px; border-color: rgba(239, 68, 68, 0.45); background: rgba(239,68,68,0.08);">
+          <span>🌐</span>
+          <span style="font-weight: 700;">Set Mini App Link</span>
+        </button>
+      </div>
+
+      <!-- 3. Bot Token & Server Settings Buttons -->
+      <div style="display:flex; gap: 8px;">
+        <button id="openBotTokenModalBtn" class="btn btn-secondary" style="flex: 1; padding: 9px; font-size: 0.78rem; display: flex; align-items: center; justify-content: center; gap: 6px;">
+          <span>🤖</span>
+          <span>Bot Token</span>
+        </button>
+        <button id="openServerSettingsBtn" class="btn btn-secondary" style="flex: 1; padding: 9px; font-size: 0.78rem; display: flex; align-items: center; justify-content: center; gap: 6px;">
+          <span>⚙️</span>
+          <span>API / Server</span>
+        </button>
+      </div>
+    </section>
+
     <!-- Vibrant ProviderBotz Channel Banner -->
     <aside class="channel-banner">
       <div class="channel-banner-info">
@@ -986,6 +1051,97 @@
         <div style="display: flex; gap: 8px;">
           <button id="testConnectionBtn" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.8rem;">🔍 Test Server</button>
           <button id="saveSettingsBtn" class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 0.8rem;">💾 Save & Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 📋 StringSession Modal -->
+  <div id="sessionModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📋 Telethon StringSession</h3>
+        <button id="closeSessionBtn" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="sessionCurrentStatus" style="font-size: 0.78rem; padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
+          <span>Engine Status:</span>
+          <span id="sessionStatusBadge" style="font-weight:700; color:#f87171;">Checking...</span>
+        </div>
+        <label class="input-label" style="margin-bottom: 6px; display:block;">Paste StringSession</label>
+        <textarea
+          id="sessionModalInput"
+          class="url-input"
+          style="font-size: 0.76rem; font-family: 'JetBrains Mono', monospace; padding: 10px 12px; margin-bottom: 8px; width: 100%; height: 90px; box-sizing: border-box; resize: vertical;"
+          placeholder="1BVtsOIEBu03moBzbxTbt..."
+        ></textarea>
+        <div style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 14px; line-height: 1.4;">
+          Paste your Telethon StringSession. Once saved, it connects with Android 14 parameters and activates the dual bypass engine instantly.
+        </div>
+        <div id="sessionSaveStatus" style="font-size: 0.76rem; margin-bottom: 12px; padding: 8px 10px; border-radius: var(--radius-sm); display:none;"></div>
+        <div style="display: flex; gap: 8px;">
+          <button id="cancelSessionBtn" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.8rem;">Cancel</button>
+          <button id="saveSessionBtn" class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 0.8rem;">💾 Save & Connect</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🌐 Set Mini App Link Modal (Only Owner) -->
+  <div id="miniAppModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🌐 Configure Mini App Link</h3>
+        <button id="closeMiniAppBtn" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 0.78rem; padding: 8px 12px; border-radius: var(--radius-sm); margin-bottom: 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle);">
+          <div style="color:var(--text-dim); font-size:0.7rem; margin-bottom:2px;">Current Active Mini App Link:</div>
+          <div id="miniAppCurrentLink" style="font-family:'JetBrains Mono', monospace; font-size:0.75rem; word-break:break-all; color:#93c5fd;">Loading...</div>
+        </div>
+        <label class="input-label" style="margin-bottom: 6px; display:block;">Mini App URL (Must be HTTPS)</label>
+        <input 
+          type="text" 
+          id="miniAppModalInput" 
+          class="url-input" 
+          style="font-size: 0.8rem; padding: 10px 12px; margin-bottom: 8px; width: 100%; box-sizing: border-box;"
+          placeholder="https://t.me/YourBot/app or https://..."
+        >
+        <div style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 14px; line-height: 1.4;">
+          👑 <b>Owner Exclusive:</b> Only the bot owner can configure this link. It updates the <b>"🚀 Open Mini App"</b> button shown to all users on the Telegram start screen and saves to miniapp.txt.
+        </div>
+        <div id="miniAppSaveStatus" style="font-size: 0.76rem; margin-bottom: 12px; padding: 8px 10px; border-radius: var(--radius-sm); display:none;"></div>
+        <div style="display: flex; gap: 8px;">
+          <button id="cancelMiniAppBtn" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.8rem;">Cancel</button>
+          <button id="saveMiniAppBtn" class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 0.8rem;">💾 Save & Update Link</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🤖 Bot Token Modal -->
+  <div id="botTokenModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🤖 Telegram Bot Token</h3>
+        <button id="closeBotTokenBtn" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="input-label" style="margin-bottom: 6px; display:block;">Bot Token (from @BotFather)</label>
+        <input 
+          type="text" 
+          id="botTokenModalInput" 
+          class="url-input" 
+          style="font-size: 0.8rem; font-family: 'JetBrains Mono', monospace; padding: 10px 12px; margin-bottom: 8px; width: 100%; box-sizing: border-box;"
+          placeholder="123456789:ABCdef..."
+        >
+        <div style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 14px; line-height: 1.4;">
+          Paste your public bot token from @BotFather. The bot will automatically initialize and start answering immediately.
+        </div>
+        <div id="botTokenSaveStatus" style="font-size: 0.76rem; margin-bottom: 12px; padding: 8px 10px; border-radius: var(--radius-sm); display:none;"></div>
+        <div style="display: flex; gap: 8px;">
+          <button id="cancelBotTokenBtn" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.8rem;">Cancel</button>
+          <button id="saveBotTokenBtn" class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 0.8rem;">💾 Save & Connect</button>
         </div>
       </div>
     </div>
@@ -1080,11 +1236,45 @@
         }
       } catch (e) {}
 
-      // Update UI: Gear button ONLY shown for owner
+      // Update UI: Gear button & Owner Panel ONLY shown for owner
       if (ownerGearBtn) {
         ownerGearBtn.style.display = isOwner ? 'flex' : 'none';
       }
+      const ownerControlSection = document.getElementById('ownerControlSection');
+      if (ownerControlSection) {
+        ownerControlSection.style.display = isOwner ? 'block' : 'none';
+      }
+      if (isOwner) {
+        refreshOwnerConfig();
+      }
       return isOwner;
+    }
+
+    async function refreshOwnerConfig() {
+      try {
+        const res = await fetch('/api/config', { signal: AbortSignal.timeout(3500) });
+        if (res.ok) {
+          const cfg = await res.json();
+          const badge = document.getElementById('ownerEngineBadge');
+          const sessBadge = document.getElementById('sessionStatusBadge');
+          const miniLink = document.getElementById('miniAppCurrentLink');
+          
+          if (badge) {
+            badge.textContent = cfg.userbot_connected ? '🟢 Engine Online' : (cfg.has_session ? '🟡 Userbot Inactive' : '🔴 No Session');
+            badge.style.color = cfg.userbot_connected ? '#4ade80' : '#f87171';
+            badge.style.borderColor = cfg.userbot_connected ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)';
+          }
+          if (sessBadge) {
+            sessBadge.textContent = cfg.userbot_connected ? '🟢 Connected' : (cfg.has_session ? '🟡 Connecting / Inactive' : '🔴 Not Configured');
+            sessBadge.style.color = cfg.userbot_connected ? '#4ade80' : '#f87171';
+          }
+          if (miniLink && cfg.miniapp_url) {
+            miniLink.textContent = cfg.miniapp_url;
+            const mInput = document.getElementById('miniAppModalInput');
+            if (mInput && !mInput.value) mInput.value = cfg.miniapp_url;
+          }
+        }
+      } catch (e) {}
     }
 
     // Secret 5-tap on brand logo (⚡) to unlock Owner mode on any browser
@@ -1249,6 +1439,203 @@
       settingsModal.style.display = 'none';
       checkServerStatus();
     });
+
+    // Owner Modal Actions (Session Paste, Mini App Link, Bot Token)
+    const openSessionModalBtn = document.getElementById('openSessionModalBtn');
+    const openMiniAppModalBtn = document.getElementById('openMiniAppModalBtn');
+    const openBotTokenModalBtn = document.getElementById('openBotTokenModalBtn');
+    const openServerSettingsBtn = document.getElementById('openServerSettingsBtn');
+
+    const sessionModal = document.getElementById('sessionModal');
+    const closeSessionBtn = document.getElementById('closeSessionBtn');
+    const cancelSessionBtn = document.getElementById('cancelSessionBtn');
+    const sessionModalInput = document.getElementById('sessionModalInput');
+    const saveSessionBtn = document.getElementById('saveSessionBtn');
+    const sessionSaveStatus = document.getElementById('sessionSaveStatus');
+
+    const miniAppModal = document.getElementById('miniAppModal');
+    const closeMiniAppBtn = document.getElementById('closeMiniAppBtn');
+    const cancelMiniAppBtn = document.getElementById('cancelMiniAppBtn');
+    const miniAppModalInput = document.getElementById('miniAppModalInput');
+    const saveMiniAppBtn = document.getElementById('saveMiniAppBtn');
+    const miniAppSaveStatus = document.getElementById('miniAppSaveStatus');
+
+    const botTokenModal = document.getElementById('botTokenModal');
+    const closeBotTokenBtn = document.getElementById('closeBotTokenBtn');
+    const cancelBotTokenBtn = document.getElementById('cancelBotTokenBtn');
+    const botTokenModalInput = document.getElementById('botTokenModalInput');
+    const saveBotTokenBtn = document.getElementById('saveBotTokenBtn');
+    const botTokenSaveStatus = document.getElementById('botTokenSaveStatus');
+
+    if (openSessionModalBtn) {
+      openSessionModalBtn.addEventListener('click', () => {
+        triggerHaptic('light');
+        if (sessionSaveStatus) sessionSaveStatus.style.display = 'none';
+        if (sessionModal) sessionModal.style.display = 'flex';
+        refreshOwnerConfig();
+      });
+    }
+    if (closeSessionBtn) closeSessionBtn.addEventListener('click', () => sessionModal.style.display = 'none');
+    if (cancelSessionBtn) cancelSessionBtn.addEventListener('click', () => sessionModal.style.display = 'none');
+
+    if (saveSessionBtn) {
+      saveSessionBtn.addEventListener('click', async () => {
+        triggerHaptic('light');
+        const sess = sessionModalInput.value.trim();
+        if (!sess) {
+          showToast('Please paste a StringSession', '⚠️');
+          return;
+        }
+        sessionSaveStatus.style.display = 'block';
+        sessionSaveStatus.style.background = 'rgba(255,255,255,0.05)';
+        sessionSaveStatus.style.color = '#e2e8f0';
+        sessionSaveStatus.textContent = '⏳ Saving StringSession and connecting Userbot...';
+
+        try {
+          const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telegram_session: sess })
+          });
+          const data = await res.json();
+          if (data && data.status) {
+            triggerHaptic('success');
+            sessionSaveStatus.style.background = 'rgba(34, 197, 94, 0.15)';
+            sessionSaveStatus.style.color = '#4ade80';
+            sessionSaveStatus.textContent = '✅ StringSession saved & activated!';
+            showToast('Userbot Session Updated!', '✅');
+            setTimeout(() => {
+              sessionModal.style.display = 'none';
+              refreshOwnerConfig();
+            }, 1200);
+          } else {
+            throw new Error(data?.message || 'Failed to update session');
+          }
+        } catch (err) {
+          triggerHaptic('error');
+          sessionSaveStatus.style.background = 'rgba(239, 68, 68, 0.15)';
+          sessionSaveStatus.style.color = '#f87171';
+          sessionSaveStatus.textContent = `❌ Error: ${err.message}`;
+        }
+      });
+    }
+
+    if (openMiniAppModalBtn) {
+      openMiniAppModalBtn.addEventListener('click', () => {
+        triggerHaptic('light');
+        if (miniAppSaveStatus) miniAppSaveStatus.style.display = 'none';
+        if (miniAppModal) miniAppModal.style.display = 'flex';
+        refreshOwnerConfig();
+      });
+    }
+    if (closeMiniAppBtn) closeMiniAppBtn.addEventListener('click', () => miniAppModal.style.display = 'none');
+    if (cancelMiniAppBtn) cancelMiniAppBtn.addEventListener('click', () => miniAppModal.style.display = 'none');
+
+    if (saveMiniAppBtn) {
+      saveMiniAppBtn.addEventListener('click', async () => {
+        triggerHaptic('light');
+        let mUrl = miniAppModalInput.value.trim();
+        if (!mUrl) {
+          showToast('Please enter a URL', '⚠️');
+          return;
+        }
+        if (!mUrl.startsWith('http://') && !mUrl.startsWith('https://')) {
+          mUrl = 'https://' + mUrl;
+        }
+        miniAppSaveStatus.style.display = 'block';
+        miniAppSaveStatus.style.background = 'rgba(255,255,255,0.05)';
+        miniAppSaveStatus.style.color = '#e2e8f0';
+        miniAppSaveStatus.textContent = '⏳ Saving Mini App link...';
+
+        try {
+          const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ miniapp_url: mUrl })
+          });
+          const data = await res.json();
+          if (data && data.status) {
+            triggerHaptic('success');
+            miniAppSaveStatus.style.background = 'rgba(34, 197, 94, 0.15)';
+            miniAppSaveStatus.style.color = '#4ade80';
+            miniAppSaveStatus.textContent = '✅ Mini App link updated!';
+            showToast('Mini App Link Updated!', '✅');
+            setTimeout(() => {
+              miniAppModal.style.display = 'none';
+              refreshOwnerConfig();
+            }, 1200);
+          } else {
+            throw new Error(data?.message || 'Failed to update link');
+          }
+        } catch (err) {
+          triggerHaptic('error');
+          miniAppSaveStatus.style.background = 'rgba(239, 68, 68, 0.15)';
+          miniAppSaveStatus.style.color = '#f87171';
+          miniAppSaveStatus.textContent = `❌ Error: ${err.message}`;
+        }
+      });
+    }
+
+    if (openBotTokenModalBtn) {
+      openBotTokenModalBtn.addEventListener('click', () => {
+        triggerHaptic('light');
+        if (botTokenSaveStatus) botTokenSaveStatus.style.display = 'none';
+        if (botTokenModal) botTokenModal.style.display = 'flex';
+      });
+    }
+    if (closeBotTokenBtn) closeBotTokenBtn.addEventListener('click', () => botTokenModal.style.display = 'none');
+    if (cancelBotTokenBtn) cancelBotTokenBtn.addEventListener('click', () => botTokenModal.style.display = 'none');
+
+    if (saveBotTokenBtn) {
+      saveBotTokenBtn.addEventListener('click', async () => {
+        triggerHaptic('light');
+        const token = botTokenModalInput.value.trim();
+        if (!token) {
+          showToast('Please enter a Bot Token', '⚠️');
+          return;
+        }
+        botTokenSaveStatus.style.display = 'block';
+        botTokenSaveStatus.style.background = 'rgba(255,255,255,0.05)';
+        botTokenSaveStatus.style.color = '#e2e8f0';
+        botTokenSaveStatus.textContent = '⏳ Saving Bot Token...';
+
+        try {
+          const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_token: token })
+          });
+          const data = await res.json();
+          if (data && data.status) {
+            triggerHaptic('success');
+            botTokenSaveStatus.style.background = 'rgba(34, 197, 94, 0.15)';
+            botTokenSaveStatus.style.color = '#4ade80';
+            botTokenSaveStatus.textContent = '✅ Bot Token saved!';
+            showToast('Bot Token Saved!', '✅');
+            setTimeout(() => {
+              botTokenModal.style.display = 'none';
+              refreshOwnerConfig();
+            }, 1200);
+          } else {
+            throw new Error(data?.message || 'Failed to update token');
+          }
+        } catch (err) {
+          triggerHaptic('error');
+          botTokenSaveStatus.style.background = 'rgba(239, 68, 68, 0.15)';
+          botTokenSaveStatus.style.color = '#f87171';
+          botTokenSaveStatus.textContent = `❌ Error: ${err.message}`;
+        }
+      });
+    }
+
+    if (openServerSettingsBtn) {
+      openServerSettingsBtn.addEventListener('click', () => {
+        triggerHaptic('light');
+        customApiInput.value = localStorage.getItem('bypass_api_url') || '';
+        serverTestStatus.style.display = 'none';
+        settingsModal.style.display = 'flex';
+      });
+    }
 
     function triggerHaptic(type) {
       if (tg?.HapticFeedback) {
