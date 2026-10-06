@@ -69,17 +69,17 @@ def write_file_safe(filename: str, content: str):
 VERSION = "4.0.3"
 BOT_TOKEN = (
     read_file_safe("token.txt")
-    or os.environ.get("BOT_TOKEN", "").strip()
+    or os.environ.get("BOT_TOKEN", "8678804822:AAFhcBvuAI9Z-kArVGrju3bompsd8qg141g").strip()
 )
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
-OWNER_ID = int(os.environ["OWNER_ID"].strip()) if os.environ.get("OWNER_ID", "").strip().isdigit() else None
+OWNER_ID = int(os.environ["OWNER_ID"].strip()) if os.environ.get("OWNER_ID", "7931847651").strip().isdigit() else None
 DEVELOPER = os.environ.get("DEVELOPER", "@ProviderBotz").strip()
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
-START_IMAGE_URL = os.environ.get("START_IMAGE_URL", "").strip()
+START_IMAGE_URL = os.environ.get("START_IMAGE_URL", "https://i.ibb.co/2Yv768HY/uploaded-image.jpg").strip()
 
 # Userbot credentials
-TELEGRAM_API_ID = int(os.environ.get("TELEGRAM_API_ID", "0")) or 0
-TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "").strip()
+TELEGRAM_API_ID = int(os.environ.get("TELEGRAM_API_ID", "36805393") or 0
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
 TELEGRAM_SESSION = (
     read_file_safe("session.txt")
     or os.environ.get("TELEGRAM_SESSION", "").strip()
