@@ -135,7 +135,8 @@ FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 START_IMAGE_URL = os.environ.get("START_IMAGE_URL", "https://i.ibb.co/2Yv768HY/uploaded-image.jpg").strip()
 
 # Userbot credentials
-TELEGRAM_API_ID = int(os.environ.get("TELEGRAM_API_ID", "36805393") or 0)
+raw_api_id = (os.environ.get("TELEGRAM_API_ID") or "36805393").strip()
+TELEGRAM_API_ID = int(raw_api_id) if raw_api_id.isdigit() else 36805393
 TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
 TELEGRAM_SESSION = (
     read_file_safe("session.txt")
@@ -616,6 +617,36 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
         "response_ms": f"{duration_ms}ms"
     }
 
+async def watch_userbot_disconnect(client: Any):
+    try:
+        await client.disconnected
+    except AuthKeyDuplicatedError:
+        logger.error("❌ Telethon AuthKeyDuplicatedError: session revoked by Telegram (active under multiple IPs). Halting reconnect.")
+        engine.connected = False
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        if OWNER_ID and globals().get("bot_api"):
+            try:
+                await bot_api.send_message(
+                    OWNER_ID,
+                    f"⚠️ <b>Userbot Session Alert (v{VERSION})</b>\n\n"
+                    f"Telegram revoked this authorization key because it was detected under two different IP addresses simultaneously (<code>AuthKeyDuplicatedError</code>).\n\n"
+                    f"👉 <i>Please generate a fresh session below and tap Paste StringSession to reconnect:</i>",
+                    reply_markup={
+                        "inline_keyboard": [
+                            [{"text": "🔑 Generate StringSession", "url": "https://t.me/StringFatherBot", "style": "primary"}],
+                            [{"text": "📋 Paste StringSession", "callback_data": "cmd_paste_session", "style": "success"}]
+                        ]
+                    }
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Userbot disconnected: {e}")
+        engine.connected = False
+
 async def restart_userbot(new_session: str) -> Tuple[bool, str]:
     global TELEGRAM_SESSION
     if not HAS_TELETHON or not TelegramClient or not StringSession:
@@ -673,6 +704,7 @@ async def restart_userbot(new_session: str) -> Tuple[bool, str]:
 
         account_name = f"{me.first_name} (@{me.username or me.id})"
         logger.info(f"✅ Userbot connected: {account_name}")
+        asyncio.create_task(watch_userbot_disconnect(new_client))
         return True, account_name
     except AuthKeyDuplicatedError:
         err_msg = (
