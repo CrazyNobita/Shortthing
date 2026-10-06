@@ -1809,8 +1809,8 @@
 
         if (data && data.status === true && data.url) {
           triggerHaptic('success');
-          showResult(rawUrl, data.url, data.source || 'dzhq', data.response_ms);
-          saveHistory(data.url, data.source);
+          showResult(rawUrl, data.url, data.source || 'providerbotz_core', data.response_ms);
+          saveHistory(data.url, data.source || 'providerbotz_core');
           return;
         }
 
