@@ -161,7 +161,7 @@ Follow these steps to set up and run the ShortnerBypass project locally or on yo
    ```
 5. Run the application:
    ```sh
-   python bot.py
+   python main.py
    ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -275,19 +275,19 @@ docker run -d -p 5000:5000 --env-file .env --name shortner-bypass-app shortner-b
 #### Render / Railway / VPS
 * **Render:** Connect repository to Render. It auto-detects `render.yaml`. Set environment variables in the dashboard.
 * **Railway:** Select **Deploy from GitHub repo**. Railway automatically reads `railway.yaml` and `Dockerfile`.
-* **VPS (Systemd):** Run `python bot.py` via systemd or supervisor to ensure auto-restart on system reboots.
+* **VPS (Systemd):** Run `python main.py` via systemd or supervisor to ensure auto-restart on system reboots.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- ROADMAP -->
 ## Roadmap
 
-- [x] Dual-engine bypass integration (DZHQ + Alex DM)
-- [x] Native Telegram Bot API 9.4+ colored button styles
-- [x] Obsidian Red responsive glassmorphism Telegram Mini App
-- [x] Automatic Cloudflare tunnel generation for Mini App
-- [x] Full Telegram blockquote (`<blockquote>`) message formatting
-- [x] Resilient custom reply quoting with zero-error fallback
+- [x] Dual-engine high-speed bypass integration
+- [x] Native Telegram Bot API colored button styles
+- [x] Responsive glassmorphism Telegram Mini App
+- [x] Live StringSession & Mini App link configuration for Owner
+- [x] Automatic 2-minute clean message self-destruct
+- [x] Fast direct resolver fallback for instant unshortening
 - [ ] Multi-account userbot rotation pool
 - [ ] Webhook support for ultra-low latency Telegram event delivery
 
