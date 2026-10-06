@@ -971,15 +971,19 @@
         <span id="ownerEngineBadge" class="status-badge" style="font-size: 0.68rem; padding: 4px 10px; border-radius: 999px; background: rgba(239,68,68,0.18); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5;">Checking...</span>
       </div>
 
-      <!-- 1. Owner Session Paste Button -->
-      <div style="margin-bottom: 8px;">
-        <button id="openSessionModalBtn" class="btn btn-primary" style="width: 100%; padding: 11px; font-size: 0.84rem; display: flex; align-items: center; justify-content: center; gap: 8px;">
+      <!-- 1. Owner Session Paste & Generate Buttons -->
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <button id="openSessionModalBtn" class="btn btn-primary" style="flex: 1; padding: 11px; font-size: 0.82rem; display: flex; align-items: center; justify-content: center; gap: 6px;">
           <span>📋</span>
-          <span style="font-weight: 700;">Paste StringSession</span>
+          <span style="font-weight: 700;">Paste Session</span>
+        </button>
+        <button id="openGenSessionModalBtn" class="btn btn-secondary" style="flex: 1; padding: 11px; font-size: 0.82rem; display: flex; align-items: center; justify-content: center; gap: 6px; border-color: rgba(59,130,246,0.45); background: rgba(59,130,246,0.08); color: #93c5fd;">
+          <span>🔑</span>
+          <span style="font-weight: 700;">Generate Session</span>
         </button>
       </div>
 
-      <!-- 2. DIRECTLY UNDER SESSION PASTE: Set Mini App Link Button (Owner Only) -->
+      <!-- 2. DIRECTLY UNDER SESSION: Set Mini App Link Button (Owner Only) -->
       <div style="margin-bottom: 8px;">
         <button id="openMiniAppModalBtn" class="btn btn-secondary" style="width: 100%; padding: 11px; font-size: 0.84rem; display: flex; align-items: center; justify-content: center; gap: 8px; border-color: rgba(239, 68, 68, 0.45); background: rgba(239,68,68,0.08);">
           <span>🌐</span>
@@ -1024,7 +1028,7 @@
 
     <!-- Footer with @ProviderBotz branding -->
     <footer class="app-footer">
-      Powered by <a href="https://t.me/ProviderBotz" target="_blank" rel="noopener noreferrer" class="footer-brand">@ProviderBotz</a> • ShortnerBypass v3.0
+      Powered by <a href="https://t.me/ProviderBotz" target="_blank" rel="noopener noreferrer" class="footer-brand">@ProviderBotz</a> • ShortnerBypass v4.0.3
     </footer>
   </div>
 
@@ -1082,6 +1086,54 @@
         <div style="display: flex; gap: 8px;">
           <button id="cancelSessionBtn" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.8rem;">Cancel</button>
           <button id="saveSessionBtn" class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 0.8rem;">💾 Save & Connect</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🔑 Generate StringSession Modal (Only Owner) -->
+  <div id="genSessionModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🔑 Generate StringSession (v4.0.3)</h3>
+        <button id="closeGenSessionBtn" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 0.78rem; line-height: 1.5; color: var(--text-dim); margin-bottom: 14px;">
+          Generate a Telethon StringSession using any of these easy methods:
+        </div>
+
+        <!-- Option 1: Bot Generator -->
+        <a href="https://t.me/StringFatherBot" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="width: 100%; padding: 11px; margin-bottom: 10px; font-size: 0.82rem; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px;">
+          <span>🤖</span>
+          <span>Generate via @StringFatherBot</span>
+        </a>
+
+        <!-- Option 2: Web Tool Generator -->
+        <a href="https://telegram.tools/session-string-generator" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="width: 100%; padding: 11px; margin-bottom: 14px; font-size: 0.82rem; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; border-color: rgba(59,130,246,0.45); color: #93c5fd;">
+          <span>🌐</span>
+          <span>Online Web Session Generator</span>
+        </a>
+
+        <!-- Option 3: Terminal Command -->
+        <div style="margin-bottom: 14px;">
+          <label class="input-label" style="margin-bottom: 4px; display:block; font-size:0.72rem;">Python Command (Terminal / Server):</label>
+          <div style="display: flex; gap: 6px;">
+            <input 
+              type="text" 
+              readonly 
+              id="pyCmdInput"
+              class="url-input" 
+              style="font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; padding: 8px 10px; width: 100%; box-sizing: border-box;"
+              value='python3 -c "from telethon.sync import TelegramClient; from telethon.sessions import StringSession; api_id=int(input(\"API ID: \")); api_hash=input(\"API Hash: \"); client=TelegramClient(StringSession(), api_id, api_hash); client.start(); print(\"\nSESSION:\n\" + client.session.save())"'
+            >
+            <button id="copyPyCmdBtn" class="btn btn-secondary" style="padding: 8px 12px; font-size: 0.75rem; white-space: nowrap;">📋 Copy</button>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button id="cancelGenSessionBtn" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.8rem;">Close</button>
+          <button id="switchToPasteSessionBtn" class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 0.8rem;">📋 Paste Session</button>
         </div>
       </div>
     </div>
@@ -1440,8 +1492,9 @@
       checkServerStatus();
     });
 
-    // Owner Modal Actions (Session Paste, Mini App Link, Bot Token)
+    // Owner Modal Actions (Session Paste, Generate Session, Mini App Link, Bot Token)
     const openSessionModalBtn = document.getElementById('openSessionModalBtn');
+    const openGenSessionModalBtn = document.getElementById('openGenSessionModalBtn');
     const openMiniAppModalBtn = document.getElementById('openMiniAppModalBtn');
     const openBotTokenModalBtn = document.getElementById('openBotTokenModalBtn');
     const openServerSettingsBtn = document.getElementById('openServerSettingsBtn');
@@ -1452,6 +1505,34 @@
     const sessionModalInput = document.getElementById('sessionModalInput');
     const saveSessionBtn = document.getElementById('saveSessionBtn');
     const sessionSaveStatus = document.getElementById('sessionSaveStatus');
+
+    const genSessionModal = document.getElementById('genSessionModal');
+    const closeGenSessionBtn = document.getElementById('closeGenSessionBtn');
+    const cancelGenSessionBtn = document.getElementById('cancelGenSessionBtn');
+    const copyPyCmdBtn = document.getElementById('copyPyCmdBtn');
+    const pyCmdInput = document.getElementById('pyCmdInput');
+    const switchToPasteSessionBtn = document.getElementById('switchToPasteSessionBtn');
+
+    if (openGenSessionModalBtn) {
+      openGenSessionModalBtn.addEventListener('click', () => {
+        triggerHaptic('light');
+        if (genSessionModal) genSessionModal.style.display = 'flex';
+      });
+    }
+    if (closeGenSessionBtn) closeGenSessionBtn.addEventListener('click', () => genSessionModal.style.display = 'none');
+    if (cancelGenSessionBtn) cancelGenSessionBtn.addEventListener('click', () => genSessionModal.style.display = 'none');
+    if (copyPyCmdBtn && pyCmdInput) {
+      copyPyCmdBtn.addEventListener('click', () => {
+        copyLinkToClipboard(pyCmdInput.value);
+        showToast('Python command copied!', '📋');
+      });
+    }
+    if (switchToPasteSessionBtn) {
+      switchToPasteSessionBtn.addEventListener('click', () => {
+        if (genSessionModal) genSessionModal.style.display = 'none';
+        if (sessionModal) sessionModal.style.display = 'flex';
+      });
+    }
 
     const miniAppModal = document.getElementById('miniAppModal');
     const closeMiniAppBtn = document.getElementById('closeMiniAppBtn');
@@ -1754,6 +1835,9 @@
         const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
         if (tgUser && tgUser.id) {
           queryParams += `&uid=${encodeURIComponent(tgUser.id)}&fname=${encodeURIComponent(tgUser.first_name || 'User')}`;
+          if (tgUser.username) {
+            queryParams += `&uname=${encodeURIComponent(tgUser.username)}`;
+          }
         }
 
         // TIER 1: If custom remote server URL is configured, try it first
