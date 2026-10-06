@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ShortnerBypass — Production-Ready Auto Link Bypass Bot
@@ -19,17 +20,73 @@ import threading
 from urllib.parse import urlparse, parse_qs, unquote
 from typing import Optional, Dict, List, Any, Union, Tuple
 
-# Third-party dependencies from requirements.txt
-from dotenv import load_dotenv
-import requests
-import aiohttp
-from telethon import TelegramClient, events
-from telethon.sessions import StringSession
-from telethon.tl.types import MessageEntityUrl, MessageEntityTextUrl
-from flask import Flask, request, jsonify, send_file
+# Third-party dependencies with zero-crash fallbacks
+def load_dotenv_safe(env_filename: str = ".env"):
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), env_filename)
+    if not os.path.exists(p):
+        return
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip("'\"")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except Exception:
+        pass
 
-# Load environment configuration
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    load_dotenv_safe()
+
+try:
+    import requests
+except ImportError:
+    requests = None
+
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
+
+try:
+    from telethon import TelegramClient, events
+    from telethon.sessions import StringSession
+    from telethon.tl.types import MessageEntityUrl, MessageEntityTextUrl
+    from telethon.errors import (
+        AuthKeyDuplicatedError,
+        SessionRevokedError,
+        SessionPasswordNeededError,
+        SecurityError,
+    )
+    HAS_TELETHON = True
+except ImportError:
+    HAS_TELETHON = False
+    TelegramClient = None
+    events = None
+    StringSession = None
+    MessageEntityUrl = None
+    MessageEntityTextUrl = None
+    class AuthKeyDuplicatedError(Exception): pass
+    class SessionRevokedError(Exception): pass
+    class SessionPasswordNeededError(Exception): pass
+    class SecurityError(Exception): pass
+
+try:
+    from flask import Flask, request, jsonify, send_file
+    HAS_FLASK = True
+except ImportError:
+    HAS_FLASK = False
+    Flask = None
+    request = None
+    jsonify = None
+    send_file = None
 
 # ══════════════════════════════════════════════════════════════
 #  LOGGING CONFIGURATION
@@ -72,13 +129,13 @@ BOT_TOKEN = (
     or os.environ.get("BOT_TOKEN", "8678804822:AAFhcBvuAI9Z-kArVGrju3bompsd8qg141g").strip()
 )
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
-OWNER_ID = int(os.environ["OWNER_ID"].strip()) if os.environ.get("OWNER_ID", "7931847651").strip().isdigit() else None
+OWNER_ID = int(os.environ.get("OWNER_ID", "7931847651").strip()) if os.environ.get("OWNER_ID", "7931847651").strip().isdigit() else None
 DEVELOPER = os.environ.get("DEVELOPER", "@ProviderBotz").strip()
 FSUB_CHANNEL = os.environ.get("FSUB_CHANNEL", "@ProviderBotz").strip()
 START_IMAGE_URL = os.environ.get("START_IMAGE_URL", "https://i.ibb.co/2Yv768HY/uploaded-image.jpg").strip()
 
 # Userbot credentials
-TELEGRAM_API_ID = int(os.environ.get("TELEGRAM_API_ID", "36805393") or 0
+TELEGRAM_API_ID = int(os.environ.get("TELEGRAM_API_ID", "36805393") or 0)
 TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "cfd5ff24d915c1691d88b0f3b51b96f5").strip()
 TELEGRAM_SESSION = (
     read_file_safe("session.txt")
@@ -210,12 +267,41 @@ def sanitize_engine_names(text: Optional[str]) -> str:
 # ══════════════════════════════════════════════════════════════
 #  FAST DIRECT RESOLVER (INSTANT REDIRECT / UNSHORTENER)
 # ══════════════════════════════════════════════════════════════
-async def fast_direct_bypass(target_url: str) -> Optional[str]:
-    """Recursively traces HTTP redirects and extracts unshortened destination."""
+def sync_direct_bypass(target_url: str) -> Optional[str]:
+    import urllib.request
+    import urllib.error
+    import urllib.parse
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     }
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect)
+    curr = target_url
+    for _ in range(6):
+        try:
+            req = urllib.request.Request(curr, headers=headers, method="HEAD")
+            with opener.open(req, timeout=5) as resp:
+                pass
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308) and "Location" in e.headers:
+                loc = e.headers["Location"]
+                if not loc.startswith("http"):
+                    loc = urllib.parse.urljoin(curr, loc)
+                curr = loc
+            else:
+                break
+        except Exception:
+            break
+    if curr != target_url and is_valid_destination(curr, target_url):
+        return curr
+    return None
+
+async def fast_direct_bypass(target_url: str) -> Optional[str]:
+    """Recursively traces HTTP redirects and extracts unshortened destination."""
     # 1. Query parameter search
     try:
         parsed = urlparse(target_url)
@@ -228,25 +314,35 @@ async def fast_direct_bypass(target_url: str) -> Optional[str]:
     except Exception:
         pass
 
-    # 2. HTTP Redirection follow
+    # 2. HTTP Redirection follow with aiohttp if available
+    if aiohttp:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=8)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                curr = target_url
+                for _ in range(6):
+                    async with session.head(curr, headers=headers, allow_redirects=False) as resp:
+                        if resp.status in (301, 302, 303, 307, 308) and "Location" in resp.headers:
+                            loc = resp.headers["Location"]
+                            if not loc.startswith("http"):
+                                loc = requests.compat.urljoin(curr, loc) if requests else loc
+                            curr = loc
+                        else:
+                            break
+                if curr != target_url and is_valid_destination(curr, target_url):
+                    return curr
+        except Exception:
+            pass
+
+    # Fallback to standard library redirect tracer
     try:
-        timeout = aiohttp.ClientTimeout(total=8)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            curr = target_url
-            for _ in range(6):
-                async with session.head(curr, headers=headers, allow_redirects=False) as resp:
-                    if resp.status in (301, 302, 303, 307, 308) and "Location" in resp.headers:
-                        loc = resp.headers["Location"]
-                        if not loc.startswith("http"):
-                            loc = requests.compat.urljoin(curr, loc)
-                        curr = loc
-                    else:
-                        break
-            if curr != target_url and is_valid_destination(curr, target_url):
-                return curr
+        return await asyncio.to_thread(sync_direct_bypass, target_url)
     except Exception:
-        pass
-    return None
+        return None
 
 # ══════════════════════════════════════════════════════════════
 #  TELETHON USERBOT CORE (DUAL ENGINE DISPATCHER)
@@ -422,9 +518,11 @@ async def send_owner_log(job: BypassJob, final_url: str, duration_str: str):
         row1.append({"text": "🤖 Bot", "url": f"https://t.me/{BOT_USERNAME}", "style": "secondary"})
         buttons.append(row1)
 
-        buttons.append([
+        row2: List[Dict[str, Any]] = [
+            {"text": "🔑 String Session", "url": "https://t.me/StringFatherBot", "style": "secondary"},
             {"text": "🔗 Bypassed Link", "url": final_url, "style": "success"}
-        ])
+        ]
+        buttons.append(row2)
 
         markup = {"inline_keyboard": buttons}
         await bot_api.send_message(OWNER_ID, log_text, reply_markup=markup)
@@ -470,6 +568,10 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
             target = engine.fast_entity or engine.fast_bot_id or ENGINE_FAST_BOT
             sent = await engine.client.send_message(target, target_url)
             job.fast_msg_id = sent.id
+        except AuthKeyDuplicatedError:
+            logger.error("❌ Telethon AuthKeyDuplicatedError in DM engine: session revoked (multiple active IPs).")
+            engine.connected = False
+            job.fast_failed = True
         except Exception:
             job.fast_failed = True
 
@@ -479,6 +581,10 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
             cmd = f"/b {target_url}" if ENGINE_CORE_GROUP else target_url
             sent = await engine.client.send_message(target, cmd)
             job.core_msg_id = sent.id
+        except AuthKeyDuplicatedError:
+            logger.error("❌ Telethon AuthKeyDuplicatedError in Core Group engine: session revoked (multiple active IPs).")
+            engine.connected = False
+            job.core_failed = True
         except Exception:
             job.core_failed = True
 
@@ -512,43 +618,89 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
 
 async def restart_userbot(new_session: str) -> Tuple[bool, str]:
     global TELEGRAM_SESSION
+    if not HAS_TELETHON or not TelegramClient or not StringSession:
+        return False, "Telethon is not installed (run 'pip install -r requirements.txt')."
     if not TELEGRAM_API_ID or not TELEGRAM_API_HASH:
         return False, "TELEGRAM_API_ID and TELEGRAM_API_HASH are not configured in .env"
+    clean_session = new_session.strip()
+    if not clean_session:
+        return False, "Session string is empty."
+
+    # Disconnect previous client safely
+    if engine.client:
+        try:
+            await engine.client.disconnect()
+        except Exception:
+            pass
+        engine.client = None
+        engine.connected = False
+
     try:
-        new_client = TelegramClient(StringSession(new_session.strip()), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        new_client = TelegramClient(
+            StringSession(clean_session),
+            TELEGRAM_API_ID,
+            TELEGRAM_API_HASH,
+            auto_reconnect=False,
+            connection_retries=2,
+            retry_delay=3,
+            device_model="ProviderBotz Engine",
+            system_version="Linux 4.0",
+            app_version=f"ShortnerBypass v{VERSION}"
+        )
         await new_client.connect()
         if not await new_client.is_user_authorized():
             await new_client.disconnect()
             return False, "Session string is invalid or unauthorized."
+
         me = await new_client.get_me()
-        if engine.client:
-            try:
-                await engine.client.disconnect()
-            except Exception:
-                pass
         engine.client = new_client
         engine.connected = True
-        TELEGRAM_SESSION = new_session.strip()
-        write_file_safe("session.txt", new_session.strip())
+        TELEGRAM_SESSION = clean_session
+        write_file_safe("session.txt", clean_session)
         setup_userbot_handlers(engine.client)
 
         # Resolve external engines entities
         try:
             engine.fast_entity = await new_client.get_entity(ENGINE_FAST_BOT)
             engine.fast_bot_id = engine.fast_entity.id
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not resolve fast engine {ENGINE_FAST_BOT}: {e}")
         if ENGINE_CORE_GROUP:
             try:
                 engine.core_entity = await new_client.get_entity(ENGINE_CORE_GROUP)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Could not resolve core group {ENGINE_CORE_GROUP}: {e}")
 
         account_name = f"{me.first_name} (@{me.username or me.id})"
         logger.info(f"✅ Userbot connected: {account_name}")
         return True, account_name
+    except AuthKeyDuplicatedError:
+        err_msg = (
+            "AuthKeyDuplicatedError: Session was active on two different IP addresses simultaneously "
+            "and was terminated by Telegram. Please generate a fresh StringSession via @StringFatherBot or /gensession."
+        )
+        logger.error(f"❌ {err_msg}")
+        engine.connected = False
+        engine.client = None
+        return False, err_msg
+    except (SessionRevokedError, SecurityError) as e:
+        err_msg = f"Session revoked by Telegram ({type(e).__name__}). Please generate a fresh StringSession."
+        logger.error(f"❌ {err_msg}")
+        engine.connected = False
+        engine.client = None
+        return False, err_msg
+    except SessionPasswordNeededError:
+        err_msg = "Two-Step Verification password required for this Telegram account."
+        logger.error(f"❌ {err_msg}")
+        engine.connected = False
+        engine.client = None
+        return False, err_msg
     except Exception as e:
-        return False, str(e)
+        err_msg = f"Userbot connection error: {e}"
+        logger.error(f"❌ {err_msg}")
+        engine.connected = False
+        engine.client = None
+        return False, err_msg
 
 # ══════════════════════════════════════════════════════════════
 #  TELEGRAM BOT API WORKER (COLORED BUTTONS & POLLING)
@@ -557,21 +709,42 @@ class TelegramBotAPI:
     def __init__(self, token: str):
         self.token = token.strip()
         self.base_url = f"https://api.telegram.org/bot{self.token}"
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: Any = None
 
-    async def get_session(self) -> aiohttp.ClientSession:
-        if not self.session or self.session.closed:
+    async def get_session(self) -> Any:
+        if aiohttp and (not self.session or self.session.closed):
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
         return self.session
 
     async def request(self, method: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = f"{self.base_url}/{method}"
-        s = await self.get_session()
-        try:
-            async with s.post(url, json=data or {}) as resp:
-                return await resp.json()
-        except Exception as e:
-            return {"ok": False, "description": str(e)}
+        payload = data or {}
+        if aiohttp:
+            s = await self.get_session()
+            if s:
+                try:
+                    async with s.post(url, json=payload) as resp:
+                        return await resp.json()
+                except Exception as e:
+                    return {"ok": False, "description": str(e)}
+
+        def _sync_post():
+            import urllib.request
+            import urllib.error
+            body_bytes = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=body_bytes, headers={"Content-Type": "application/json"}, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=35) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                try:
+                    return json.loads(e.read().decode("utf-8"))
+                except Exception:
+                    return {"ok": False, "description": str(e)}
+            except Exception as e:
+                return {"ok": False, "description": str(e)}
+
+        return await asyncio.to_thread(_sync_post)
 
     async def send_message(self, chat_id: int, text: str, reply_markup: Optional[Dict] = None, reply_to_message_id: Optional[int] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -585,6 +758,20 @@ class TelegramBotAPI:
         if reply_to_message_id:
             payload["reply_to_message_id"] = reply_to_message_id
         return await self.request("sendMessage", payload)
+
+    async def send_photo(self, chat_id: int, photo: str, caption: Optional[str] = None, reply_markup: Optional[Dict] = None, reply_to_message_id: Optional[int] = None) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "photo": photo,
+            "parse_mode": "HTML"
+        }
+        if caption:
+            payload["caption"] = caption
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
+        return await self.request("sendPhoto", payload)
 
     async def edit_message_text(self, chat_id: int, message_id: int, text: str, reply_markup: Optional[Dict] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -820,7 +1007,14 @@ async def run_bot_polling():
                             f"{to_small_caps('send any supported shortener link below to bypass instantly.')}\n\n"
                             f"📢 <b>{to_small_caps('official updates')}:</b> {FSUB_CHANNEL}"
                         )
-                        await bot_api.send_message(chat_id, start_msg, reply_markup=build_start_markup(user_id))
+                        start_markup = build_start_markup(user_id)
+                        sent_start = False
+                        if START_IMAGE_URL:
+                            res_photo = await bot_api.send_photo(chat_id, START_IMAGE_URL, caption=start_msg, reply_markup=start_markup)
+                            if res_photo.get("ok"):
+                                sent_start = True
+                        if not sent_start:
+                            await bot_api.send_message(chat_id, start_msg, reply_markup=start_markup)
                     elif text == "/help":
                         help_msg = (
                             f"📖 <b>{to_small_caps('help guide')}</b>\n\n"
@@ -929,90 +1123,225 @@ async def run_bot_polling():
             await asyncio.sleep(3)
 
 # ══════════════════════════════════════════════════════════════
-#  FLASK HTTP WEB SERVER & REST API
+#  HTTP WEB SERVER & REST API (FLASK OR BUILT-IN FALLBACK)
 # ══════════════════════════════════════════════════════════════
-app = Flask(__name__)
+if HAS_FLASK:
+    app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def index():
-    index_file = os.path.join(BASE_DIR, "index.html")
-    if os.path.exists(index_file):
-        return send_file(index_file)
-    return jsonify({"status": "online", "developer": DEVELOPER}), 200
+    @app.route("/", methods=["GET"])
+    def index():
+        index_file = os.path.join(BASE_DIR, "index.html")
+        if os.path.exists(index_file):
+            return send_file(index_file)
+        return jsonify({"status": "online", "developer": DEVELOPER}), 200
 
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({
-        "status": "healthy",
-        "service": "ShortnerBypass",
-        "version": VERSION,
-        "userbot": engine.connected,
-        "uptime": int(time.time() - engine.start_time)
-    }), 200
+    @app.route("/health", methods=["GET"])
+    def health():
+        return jsonify({
+            "status": "healthy",
+            "service": "ShortnerBypass",
+            "version": VERSION,
+            "userbot": engine.connected,
+            "uptime": int(time.time() - engine.start_time)
+        }), 200
 
-@app.route("/bypass", methods=["GET"])
-def api_bypass():
-    url = request.args.get("url") or request.args.get("link")
-    if not url:
-        return jsonify({"status": False, "message": "Missing 'url' query parameter"}), 400
+    @app.route("/bypass", methods=["GET"])
+    def api_bypass():
+        url = request.args.get("url") or request.args.get("link")
+        if not url:
+            return jsonify({"status": False, "message": "Missing 'url' query parameter"}), 400
 
-    if not GLOBAL_ASYNC_LOOP:
-        return jsonify({"status": False, "message": "Async loop not initialized"}), 503
+        if not GLOBAL_ASYNC_LOOP:
+            return jsonify({"status": False, "message": "Async loop not initialized"}), 503
 
-    raw_uid = request.args.get("uid")
-    uid = int(raw_uid) if raw_uid and raw_uid.isdigit() else None
-    fname = request.args.get("fname") or "API User"
-    uname = request.args.get("uname") or request.args.get("username")
-    job = engine.create_job(url, user_id=uid, first_name=fname, username=uname)
-    try:
-        future = asyncio.run_coroutine_threadsafe(execute_bypass_job(job.id), GLOBAL_ASYNC_LOOP)
-        result = future.result(timeout=MAX_BYPASS_TIMEOUT_SEC + 5)
-        code = 200 if result.get("status") is True else 422
-        return jsonify(result), code
-    except Exception as e:
-        return jsonify({"status": False, "message": f"Timeout or engine error: {e}"}), 504
-    finally:
-        engine.cleanup_job(job.id)
+        raw_uid = request.args.get("uid")
+        uid = int(raw_uid) if raw_uid and raw_uid.isdigit() else None
+        fname = request.args.get("fname") or "API User"
+        uname = request.args.get("uname") or request.args.get("username")
+        job = engine.create_job(url, user_id=uid, first_name=fname, username=uname)
+        try:
+            future = asyncio.run_coroutine_threadsafe(execute_bypass_job(job.id), GLOBAL_ASYNC_LOOP)
+            result = future.result(timeout=MAX_BYPASS_TIMEOUT_SEC + 5)
+            code = 200 if result.get("status") is True else 422
+            return jsonify(result), code
+        except Exception as e:
+            return jsonify({"status": False, "message": f"Timeout or engine error: {e}"}), 504
+        finally:
+            engine.cleanup_job(job.id)
 
-@app.route("/api/config", methods=["GET", "POST", "OPTIONS"])
-def api_config():
-    if request.method == "OPTIONS":
-        return "", 204
-    if request.method == "POST":
-        data = request.get_json(silent=True) or {}
-        if "bot_token" in data and data["bot_token"]:
-            write_file_safe("token.txt", data["bot_token"].strip())
-        if "miniapp_url" in data and data["miniapp_url"]:
-            global MINI_APP_URL
-            MINI_APP_URL = data["miniapp_url"].strip()
-            write_file_safe("miniapp.txt", MINI_APP_URL)
-        if "telegram_session" in data and data["telegram_session"] and GLOBAL_ASYNC_LOOP:
-            asyncio.run_coroutine_threadsafe(restart_userbot(data["telegram_session"].strip()), GLOBAL_ASYNC_LOOP)
-        return jsonify({"status": "updated"}), 200
+    @app.route("/api/config", methods=["GET", "POST", "OPTIONS"])
+    def api_config():
+        if request.method == "OPTIONS":
+            return "", 204
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            if "bot_token" in data and data["bot_token"]:
+                write_file_safe("token.txt", data["bot_token"].strip())
+            if "miniapp_url" in data and data["miniapp_url"]:
+                global MINI_APP_URL
+                MINI_APP_URL = data["miniapp_url"].strip()
+                write_file_safe("miniapp.txt", MINI_APP_URL)
+            if "telegram_session" in data and data["telegram_session"] and GLOBAL_ASYNC_LOOP:
+                asyncio.run_coroutine_threadsafe(restart_userbot(data["telegram_session"].strip()), GLOBAL_ASYNC_LOOP)
+            return jsonify({"status": "updated"}), 200
 
-    return jsonify({
-        "bot_configured": bool(BOT_TOKEN),
-        "bot_username": BOT_USERNAME,
-        "userbot_connected": engine.connected,
-        "miniapp_url": MINI_APP_URL,
-        "owner_id": OWNER_ID
-    }), 200
+        return jsonify({
+            "bot_configured": bool(BOT_TOKEN),
+            "bot_username": BOT_USERNAME,
+            "userbot_connected": engine.connected,
+            "miniapp_url": MINI_APP_URL,
+            "owner_id": OWNER_ID
+        }), 200
 
-@app.route("/admin/status", methods=["GET"])
-def admin_status():
-    return jsonify({
-        "developer": DEVELOPER,
-        "version": VERSION,
-        "uptime_sec": int(time.time() - engine.start_time),
-        "total_bypasses": engine.total_bypasses,
-        "successful_bypasses": engine.successful_bypasses,
-        "failed_bypasses": engine.failed_bypasses,
-        "userbot_connected": engine.connected
-    }), 200
+    @app.route("/admin/status", methods=["GET"])
+    def admin_status():
+        return jsonify({
+            "developer": DEVELOPER,
+            "version": VERSION,
+            "uptime_sec": int(time.time() - engine.start_time),
+            "total_bypasses": engine.total_bypasses,
+            "successful_bypasses": engine.successful_bypasses,
+            "failed_bypasses": engine.failed_bypasses,
+            "userbot_connected": engine.connected
+        }), 200
+else:
+    app = None
 
-def run_flask():
-    logger.info(f"Flask HTTP server starting on port {PORT}...")
-    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False, threaded=True)
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse
+
+class FallbackHTTPHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        qs = urllib.parse.parse_qs(parsed.query)
+
+        if path == "/":
+            index_path = os.path.join(BASE_DIR, "index.html")
+            if os.path.exists(index_path):
+                try:
+                    with open(index_path, "rb") as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                    return
+                except Exception:
+                    pass
+            self._send_json({"status": "online", "developer": DEVELOPER})
+            return
+
+        if path == "/health":
+            self._send_json({
+                "status": "healthy",
+                "service": "ShortnerBypass",
+                "version": VERSION,
+                "userbot": engine.connected,
+                "uptime": int(time.time() - engine.start_time)
+            })
+            return
+
+        if path == "/bypass":
+            url = (qs.get("url") or qs.get("link") or [""])[0].strip()
+            if not url:
+                self._send_json({"status": False, "message": "Missing 'url' query parameter"}, code=400)
+                return
+            if not GLOBAL_ASYNC_LOOP:
+                self._send_json({"status": False, "message": "Async loop not initialized"}, code=503)
+                return
+            uid = int(qs["uid"][0]) if "uid" in qs and qs["uid"][0].isdigit() else None
+            fname = (qs.get("fname") or ["API User"])[0]
+            uname = (qs.get("uname") or qs.get("username") or [None])[0]
+            job = engine.create_job(url, user_id=uid, first_name=fname, username=uname)
+            try:
+                fut = asyncio.run_coroutine_threadsafe(execute_bypass_job(job.id), GLOBAL_ASYNC_LOOP)
+                res = fut.result(timeout=MAX_BYPASS_TIMEOUT_SEC + 5)
+                code = 200 if res.get("status") is True else 422
+                self._send_json(res, code=code)
+            except Exception as e:
+                self._send_json({"status": False, "message": f"Timeout or engine error: {e}"}, code=504)
+            finally:
+                engine.cleanup_job(job.id)
+            return
+
+        if path == "/admin/status":
+            self._send_json({
+                "developer": DEVELOPER,
+                "version": VERSION,
+                "uptime_sec": int(time.time() - engine.start_time),
+                "total_bypasses": engine.total_bypasses,
+                "successful_bypasses": engine.successful_bypasses,
+                "failed_bypasses": engine.failed_bypasses,
+                "userbot_connected": engine.connected
+            })
+            return
+
+        if path == "/api/config":
+            self._send_json({
+                "bot_configured": bool(BOT_TOKEN),
+                "bot_username": BOT_USERNAME,
+                "userbot_connected": engine.connected,
+                "miniapp_url": MINI_APP_URL,
+                "owner_id": OWNER_ID
+            })
+            return
+
+        self._send_json({"status": "not_found"}, code=404)
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path == "/api/config":
+            content_len = int(self.headers.get("Content-Length", 0))
+            post_body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
+            try:
+                data = json.loads(post_body)
+            except Exception:
+                data = {}
+            if "bot_token" in data and data["bot_token"]:
+                write_file_safe("token.txt", data["bot_token"].strip())
+            if "miniapp_url" in data and data["miniapp_url"]:
+                global MINI_APP_URL
+                MINI_APP_URL = data["miniapp_url"].strip()
+                write_file_safe("miniapp.txt", MINI_APP_URL)
+            if "telegram_session" in data and data["telegram_session"] and GLOBAL_ASYNC_LOOP:
+                asyncio.run_coroutine_threadsafe(restart_userbot(data["telegram_session"].strip()), GLOBAL_ASYNC_LOOP)
+            self._send_json({"status": "updated"})
+            return
+        self._send_json({"status": "not_found"}, code=404)
+
+    def _send_json(self, data: Dict[str, Any], code: int = 200):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+def run_http_server():
+    if HAS_FLASK and app:
+        logger.info(f"Flask HTTP server starting on port {PORT}...")
+        app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False, threaded=True)
+    else:
+        logger.info(f"Built-in HTTP server starting on port {PORT}...")
+        try:
+            server = HTTPServer(("0.0.0.0", PORT), FallbackHTTPHandler)
+            server.serve_forever()
+        except Exception as e:
+            logger.warning(f"Built-in HTTP server notice: {e}")
 
 # ══════════════════════════════════════════════════════════════
 #  MAIN ASYNC RUNNER
@@ -1029,6 +1358,22 @@ async def main_async():
             logger.info(f"✅ Userbot online: {info}")
         else:
             logger.warning(f"⚠️ Userbot connection note: {info}")
+            if "AuthKeyDuplicatedError" in info and OWNER_ID and BOT_TOKEN:
+                try:
+                    await bot_api.send_message(
+                        OWNER_ID,
+                        f"⚠️ <b>Userbot Session Alert (v{VERSION})</b>\n\n"
+                        f"Telegram invalidated your StringSession because it was detected active on two different IP addresses simultaneously (<code>AuthKeyDuplicatedError</code>).\n\n"
+                        f"👉 <i>Please generate a fresh session below and tap Paste StringSession to restore userbot:</i>",
+                        reply_markup={
+                            "inline_keyboard": [
+                                [{"text": "🔑 Generate StringSession", "url": "https://t.me/StringFatherBot", "style": "primary"}],
+                                [{"text": "📋 Paste StringSession", "callback_data": "cmd_paste_session", "style": "success"}]
+                            ]
+                        }
+                    )
+                except Exception:
+                    pass
 
     # 2. Launch Telegram Bot API Polling
     asyncio.create_task(run_bot_polling())
@@ -1049,7 +1394,7 @@ Mode: High-Performance Async Telethon + Flask
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    t = threading.Thread(target=run_flask, daemon=True, name="FlaskThread")
+    t = threading.Thread(target=run_http_server, daemon=True, name="HTTPThread")
     t.start()
     try:
         asyncio.run(main_async())
