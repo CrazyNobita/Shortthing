@@ -66,6 +66,7 @@ def write_file_safe(filename: str, content: str):
 # ══════════════════════════════════════════════════════════════
 #  CONFIG & CREDENTIALS
 # ══════════════════════════════════════════════════════════════
+VERSION = "4.0.3"
 BOT_TOKEN = (
     read_file_safe("token.txt")
     or os.environ.get("BOT_TOKEN", "").strip()
@@ -251,11 +252,12 @@ async def fast_direct_bypass(target_url: str) -> Optional[str]:
 #  TELETHON USERBOT CORE (DUAL ENGINE DISPATCHER)
 # ══════════════════════════════════════════════════════════════
 class BypassJob:
-    def __init__(self, job_id: str, url: str, user_id: Optional[int] = None, first_name: Optional[str] = None):
+    def __init__(self, job_id: str, url: str, user_id: Optional[int] = None, first_name: Optional[str] = None, username: Optional[str] = None):
         self.id = job_id
         self.url = url
         self.user_id = user_id
         self.first_name = first_name or "Friend"
+        self.username = username
         self.event = asyncio.Event()
         self.final_url: Optional[str] = None
         self.error: Optional[str] = None
@@ -281,9 +283,9 @@ class UserbotEngine:
         self.failed_bypasses = 0
         self.start_time = time.time()
 
-    def create_job(self, url: str, user_id: Optional[int] = None, first_name: Optional[str] = None) -> BypassJob:
+    def create_job(self, url: str, user_id: Optional[int] = None, first_name: Optional[str] = None, username: Optional[str] = None) -> BypassJob:
         job_id = secrets.token_hex(6)
-        job = BypassJob(job_id, url, user_id, first_name)
+        job = BypassJob(job_id, url, user_id, first_name, username)
         with self.jobs_lock:
             self.active_jobs[job_id] = job
         return job
@@ -388,6 +390,47 @@ def setup_userbot_handlers(client: TelegramClient):
                 matched_job.state = "FAILED"
                 matched_job.event.set()
 
+async def send_owner_log(job: BypassJob, final_url: str, duration_str: str):
+    """Sends bypassed link notification to Owner with direct DM and bot buttons."""
+    if not OWNER_ID or not globals().get("bot_api"):
+        return
+    try:
+        user_id = job.user_id
+        first_name = html.escape(job.first_name or "User")
+        username = job.username
+
+        if user_id:
+            user_mention = f'<a href="tg://user?id={user_id}">{first_name}</a>'
+            dm_url = f"https://t.me/{username}" if username else f"tg://user?id={user_id}"
+        else:
+            user_mention = f"<code>{first_name}</code> (Web Client)"
+            dm_url = None
+
+        log_text = (
+            f"⚡ <b>New Link Bypassed! (v{VERSION})</b>\n\n"
+            f"• 👤 <b>User:</b> {user_mention}" + (f" [<code>{user_id}</code>]" if user_id else "") + "\n"
+            f"• ⏱ <b>Time Taken:</b> <code>{duration_str}</code>\n"
+            f"• 🛡 <b>Engine:</b> <code>Dual-Core Bypass Engine (v{VERSION})</code>\n\n"
+            f"🔗 <b>Original Link:</b>\n{html.escape(job.url)}\n\n"
+            f"🎯 <b>Bypassed Destination:</b>\n{html.escape(final_url)}"
+        )
+
+        buttons: List[List[Dict[str, Any]]] = []
+        row1: List[Dict[str, Any]] = []
+        if dm_url:
+            row1.append({"text": "👤 User Direct DM", "url": dm_url, "style": "primary"})
+        row1.append({"text": "🤖 Bot", "url": f"https://t.me/{BOT_USERNAME}", "style": "secondary"})
+        buttons.append(row1)
+
+        buttons.append([
+            {"text": "🔗 Bypassed Link", "url": final_url, "style": "success"}
+        ])
+
+        markup = {"inline_keyboard": buttons}
+        await bot_api.send_message(OWNER_ID, log_text, reply_markup=markup)
+    except Exception as e:
+        logger.warning(f"Could not send log to owner: {e}")
+
 async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
     with engine.jobs_lock:
         job = engine.active_jobs.get(job_id)
@@ -405,6 +448,7 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
         engine.successful_bypasses += 1
         job.state = "SUCCESS"
         job.final_url = direct_res
+        asyncio.create_task(send_owner_log(job, direct_res, f"{duration_ms}ms"))
         return {
             "status": True,
             "url": direct_res,
@@ -450,6 +494,7 @@ async def execute_bypass_job(job_id: str) -> Dict[str, Any]:
     if job.state == "SUCCESS" and job.final_url:
         engine.total_bypasses += 1
         engine.successful_bypasses += 1
+        asyncio.create_task(send_owner_log(job, job.final_url, f"{duration_ms}ms"))
         return {
             "status": True,
             "url": job.final_url,
@@ -570,6 +615,7 @@ def build_start_markup(user_id: Optional[int] = None) -> Dict[str, Any]:
     is_owner = bool(user_id and (not OWNER_ID or user_id == OWNER_ID))
     if is_owner:
         inline_keyboard.append([{"text": "📋 Paste StringSession", "callback_data": "cmd_paste_session", "style": "primary"}])
+        inline_keyboard.append([{"text": "🔑 Generate StringSession", "callback_data": "cmd_gen_session", "style": "secondary"}])
         inline_keyboard.append([{"text": "🌐 Set Mini App Link", "callback_data": "cmd_set_miniapp", "style": "secondary"}])
     if MINI_APP_URL:
         if MINI_APP_URL.startswith("https://"):
@@ -581,6 +627,37 @@ def build_start_markup(user_id: Optional[int] = None) -> Dict[str, Any]:
         {"text": "📖 About", "callback_data": "cmd_about", "style": "success"}
     ])
     return {"inline_keyboard": inline_keyboard}
+
+async def send_gen_session_menu(chat_id: int, message_id: Optional[int] = None):
+    gen_text = (
+        f"🔑 <b>{to_small_caps('generate telethon stringsession')} (v{VERSION})</b>\n\n"
+        f"<i>Follow any of these 3 easy methods to generate a fresh StringSession:</i>\n\n"
+        f"<b>1. Telegram Bot Method (Fastest):</b>\n"
+        f"Use @StringFatherBot to generate directly inside Telegram with your phone number.\n\n"
+        f"<b>2. Web Browser Method:</b>\n"
+        f"Generate securely online without installing Python.\n\n"
+        f"<b>3. Terminal / Python One-Liner:</b>\n"
+        f"<code>python3 -c \"from telethon.sync import TelegramClient; from telethon.sessions import StringSession; api_id=int(input('API ID: ')); api_hash=input('API Hash: '); client=TelegramClient(StringSession(), api_id, api_hash); client.start(); print('\\nYOUR SESSION:\\n' + client.session.save())\"</code>\n\n"
+        f"👉 <i>After generating, tap '📋 Paste StringSession' below to activate!</i>"
+    )
+    markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🤖 Open @StringFatherBot", "url": "https://t.me/StringFatherBot", "style": "primary"},
+                {"text": "🌐 Web Generator", "url": "https://telegram.tools/session-string-generator", "style": "secondary"}
+            ],
+            [
+                {"text": "📋 Paste StringSession", "callback_data": "cmd_paste_session", "style": "success"}
+            ],
+            [
+                {"text": "🏠 Home", "callback_data": "cmd_home", "style": "primary"}
+            ]
+        ]
+    }
+    if message_id:
+        await bot_api.edit_message_text(chat_id, message_id, gen_text, reply_markup=markup)
+    else:
+        await bot_api.send_message(chat_id, gen_text, reply_markup=markup)
 
 def build_result_markup(final_url: str, job_url: str) -> Dict[str, Any]:
     return {"inline_keyboard": [
@@ -603,8 +680,8 @@ def schedule_auto_delete(chat_id: int, message_id: int, delay_sec: int = 120):
     if GLOBAL_ASYNC_LOOP:
         GLOBAL_ASYNC_LOOP.create_task(_del())
 
-async def process_telegram_link(chat_id: int, user_id: int, target_url: str, reply_msg_id: Optional[int] = None, first_name: Optional[str] = None):
-    job = engine.create_job(target_url, user_id=user_id, first_name=first_name)
+async def process_telegram_link(chat_id: int, user_id: int, target_url: str, reply_msg_id: Optional[int] = None, first_name: Optional[str] = None, username: Optional[str] = None):
+    job = engine.create_job(target_url, user_id=user_id, first_name=first_name, username=username)
     initial_text = f"🔄 <b>{to_small_caps('bypassing link...')}</b> [▰▱▱▱▱▱▱▱▱▱] 10%\n🔍 <i>{to_small_caps('fetching link data...')}</i>"
     init_res = await bot_api.send_message(chat_id, initial_text, reply_to_message_id=reply_msg_id)
     status_msg_id = init_res.get("result", {}).get("message_id")
@@ -755,6 +832,7 @@ async def run_bot_polling():
                     elif text == "/about":
                         about_msg = (
                             f"ℹ️ <b>{to_small_caps('about')} ShortnerBypass</b>\n\n"
+                            f"• <b>{to_small_caps('version')}</b>: <code>v{VERSION}</code>\n"
                             f"• <b>{to_small_caps('developer')}</b>: {DEVELOPER}\n"
                             f"• <b>{to_small_caps('engine')}</b>: Dual-Core ProviderBotz High-Speed Engines\n"
                             f"• <b>{to_small_caps('mode')}</b>: High-Speed Async Telethon Userbot"
@@ -763,7 +841,7 @@ async def run_bot_polling():
                     elif text in ("/stats", "/users"):
                         if is_owner:
                             st = (
-                                f"📊 <b>{to_small_caps('bot statistics')}</b>\n\n"
+                                f"📊 <b>{to_small_caps('bot statistics')} (v{VERSION})</b>\n\n"
                                 f"• 🤖 <b>Userbot:</b> {'🟢 Online' if engine.connected else '🔴 Offline'}\n"
                                 f"• 👥 <b>Registered Users:</b> <code>{len(_REGISTERED_USERS)}</code>\n"
                                 f"• ⚡ <b>Total Bypasses:</b> <code>{engine.total_bypasses}</code>\n"
@@ -771,6 +849,11 @@ async def run_bot_polling():
                                 f"• ❌ <b>Failed:</b> <code>{engine.failed_bypasses}</code>"
                             )
                             await bot_api.send_message(chat_id, st)
+                        else:
+                            await bot_api.send_message(chat_id, "⛔ Access denied.")
+                    elif text in ("/gensession", "/generatesession", "/sessiongen"):
+                        if is_owner:
+                            await send_gen_session_menu(chat_id)
                         else:
                             await bot_api.send_message(chat_id, "⛔ Access denied.")
                     elif text.startswith(("/setsession", "/session")):
@@ -795,7 +878,8 @@ async def run_bot_polling():
                     else:
                         m_url = re.search(r'https?://[^\s\n\)\]>"\']+', text)
                         if m_url:
-                            asyncio.create_task(process_telegram_link(chat_id, user_id, m_url.group(0), msg.get("message_id"), first_name))
+                            username_val = user.get("username")
+                            asyncio.create_task(process_telegram_link(chat_id, user_id, m_url.group(0), msg.get("message_id"), first_name, username_val))
 
                 # 2. Callback Query Event
                 elif "callback_query" in update:
@@ -805,12 +889,26 @@ async def run_bot_polling():
                     msg = cq.get("message", {})
                     chat_id = msg.get("chat", {}).get("id")
                     mid = msg.get("message_id")
-                    user_id = cq.get("from", {}).get("id")
+                    user = cq.get("from", {})
+                    user_id = user.get("id")
+                    first_name = html.escape(user.get("first_name", "Friend"))
+                    username_val = user.get("username")
                     await bot_api.answer_callback_query(cq_id)
 
                     if data == "cmd_paste_session":
                         OWNER_INPUT_STATE[user_id] = "WAITING_SESSION"
                         await bot_api.send_message(chat_id, "📋 <b>Paste StringSession:</b> Please send your Telethon StringSession:")
+                    elif data == "cmd_gen_session":
+                        await send_gen_session_menu(chat_id, mid)
+                    elif data == "cmd_home":
+                        start_msg = (
+                            f"{to_small_caps('welcome')} {first_name} 🌹\n\n"
+                            f"{to_small_caps('this is the fastest and powerful auto link bypass bot ∆')}\n\n"
+                            f"⚡ <b>{to_small_caps('providerbotz engine')} (v{VERSION})</b>\n"
+                            f"{to_small_caps('send any supported shortener link below to bypass instantly.')}\n\n"
+                            f"📢 <b>{to_small_caps('official updates')}:</b> {FSUB_CHANNEL}"
+                        )
+                        await bot_api.edit_message_text(chat_id, mid, start_msg, reply_markup=build_start_markup(user_id))
                     elif data == "cmd_set_miniapp":
                         OWNER_INPUT_STATE[user_id] = "WAITING_MINIAPP"
                         await bot_api.send_message(chat_id, "🌐 <b>Set Mini App Link:</b> Please send your HTTPS WebApp URL:")
@@ -819,10 +917,10 @@ async def run_bot_polling():
                     elif data == "cmd_help":
                         await bot_api.send_message(chat_id, "📖 Send any shortener link to bypass instantly.")
                     elif data == "cmd_about":
-                        await bot_api.send_message(chat_id, f"ShortnerBypass by {DEVELOPER}")
+                        await bot_api.send_message(chat_id, f"ShortnerBypass v{VERSION} by {DEVELOPER}")
                     elif data.startswith("retry:"):
                         retry_url = data.split("retry:", 1)[1]
-                        asyncio.create_task(process_telegram_link(chat_id, user_id, retry_url, mid))
+                        asyncio.create_task(process_telegram_link(chat_id, user_id, retry_url, mid, first_name, username_val))
 
         except asyncio.CancelledError:
             break
@@ -847,6 +945,7 @@ def health():
     return jsonify({
         "status": "healthy",
         "service": "ShortnerBypass",
+        "version": VERSION,
         "userbot": engine.connected,
         "uptime": int(time.time() - engine.start_time)
     }), 200
@@ -863,7 +962,8 @@ def api_bypass():
     raw_uid = request.args.get("uid")
     uid = int(raw_uid) if raw_uid and raw_uid.isdigit() else None
     fname = request.args.get("fname") or "API User"
-    job = engine.create_job(url, user_id=uid, first_name=fname)
+    uname = request.args.get("uname") or request.args.get("username")
+    job = engine.create_job(url, user_id=uid, first_name=fname, username=uname)
     try:
         future = asyncio.run_coroutine_threadsafe(execute_bypass_job(job.id), GLOBAL_ASYNC_LOOP)
         result = future.result(timeout=MAX_BYPASS_TIMEOUT_SEC + 5)
@@ -902,6 +1002,7 @@ def api_config():
 def admin_status():
     return jsonify({
         "developer": DEVELOPER,
+        "version": VERSION,
         "uptime_sec": int(time.time() - engine.start_time),
         "total_bypasses": engine.total_bypasses,
         "successful_bypasses": engine.successful_bypasses,
@@ -935,7 +1036,7 @@ async def main_async():
     # 3. Print Startup Banner
     print(f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ProviderBotz Auto Bypass Bot
+ProviderBotz Auto Bypass Bot (v{VERSION})
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HTTP Health Server: running (Port {PORT})
 Public Bot API: {'online (@' + BOT_USERNAME + ')' if BOT_TOKEN else 'waiting for token'}
