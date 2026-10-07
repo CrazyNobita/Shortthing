@@ -126,7 +126,7 @@ def write_file_safe(filename: str, content: str):
 VERSION = "4.0.3"
 BOT_TOKEN = (
     read_file_safe("token.txt")
-    or os.environ.get("BOT_TOKEN", "8678804822:AAFhcBvuAI9Z-kArVGrju3bompsd8qg141g").strip()
+    or os.environ.get("BOT_TOKEN", "8678804822:AAGTnMN8kCBoeIwhDhF3b4fASkO9cTzL0Lo").strip()
 )
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
 OWNER_ID = int(os.environ.get("OWNER_ID", "7931847651").strip()) if os.environ.get("OWNER_ID", "7931847651").strip().isdigit() else None
