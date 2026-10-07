@@ -126,7 +126,7 @@ def write_file_safe(filename: str, content: str):
 VERSION = "4.0.3"
 BOT_TOKEN = (
     read_file_safe("token.txt")
-    or os.environ.get("BOT_TOKEN", "8678804822:AAGTnMN8kCBoeIwhDhF3b4fASkO9cTzL0Lo").strip()
+    or os.environ.get("BOT_TOKEN", "8678804822:AAFhcBvuAI9Z-kArVGrju3bompsd8qg141g").strip()
 )
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "TheLinkzoBot").strip().lstrip("@")
 OWNER_ID = int(os.environ.get("OWNER_ID", "7931847651").strip()) if os.environ.get("OWNER_ID", "7931847651").strip().isdigit() else None
@@ -167,10 +167,11 @@ MINI_APP_URL = (
     or os.environ.get("PUBLIC_URL", "").strip()
 )
 
-FLASK_PORT = int(os.environ.get("FLASK_PORT", os.environ.get("PORT", "5000")))
-if FLASK_PORT in (8080, 3000):
-    FLASK_PORT = 5000
-PORT = FLASK_PORT
+raw_port = os.environ.get("FLASK_PORT") or os.environ.get("PORT") or "5000"
+try:
+    PORT = int(str(raw_port).strip())
+except Exception:
+    PORT = 5000
 
 MAX_BYPASS_TIMEOUT_SEC = int(os.environ.get("MAX_BYPASS_TIMEOUT_SEC", "120"))
 
@@ -966,6 +967,12 @@ async def process_telegram_link(chat_id: int, user_id: int, target_url: str, rep
 async def run_bot_polling():
     global BOT_TOKEN, bot_api
     offset = 0
+    # Clear any conflicting webhook once at startup
+    if BOT_TOKEN:
+        try:
+            await bot_api.request("deleteWebhook", {"drop_pending_updates": False})
+        except Exception:
+            pass
     while True:
         token = (read_file_safe("token.txt") or os.environ.get("BOT_TOKEN", "").strip())
         if not token:
@@ -1160,14 +1167,16 @@ async def run_bot_polling():
 if HAS_FLASK:
     app = Flask(__name__)
 
-    @app.route("/", methods=["GET"])
+    @app.route("/", methods=["GET", "HEAD"])
     def index():
         index_file = os.path.join(BASE_DIR, "index.html")
         if os.path.exists(index_file):
             return send_file(index_file)
         return jsonify({"status": "online", "developer": DEVELOPER}), 200
 
-    @app.route("/health", methods=["GET"])
+    @app.route("/health", methods=["GET", "HEAD"])
+    @app.route("/healthz", methods=["GET", "HEAD"])
+    @app.route("/ping", methods=["GET", "HEAD"])
     def health():
         return jsonify({
             "status": "healthy",
@@ -1177,7 +1186,7 @@ if HAS_FLASK:
             "uptime": int(time.time() - engine.start_time)
         }), 200
 
-    @app.route("/bypass", methods=["GET"])
+    @app.route("/bypass", methods=["GET", "HEAD"])
     def api_bypass():
         url = request.args.get("url") or request.args.get("link")
         if not url:
@@ -1225,7 +1234,7 @@ if HAS_FLASK:
             "owner_id": OWNER_ID
         }), 200
 
-    @app.route("/admin/status", methods=["GET"])
+    @app.route("/admin/status", methods=["GET", "HEAD"])
     def admin_status():
         return jsonify({
             "developer": DEVELOPER,
@@ -1236,6 +1245,22 @@ if HAS_FLASK:
             "failed_bypasses": engine.failed_bypasses,
             "userbot_connected": engine.connected
         }), 200
+
+    # Wildcard catch-all to prevent 404s when reverse proxies use base paths (e.g. CodeNest /live/...)
+    @app.route("/<path:subpath>", methods=["GET", "POST", "OPTIONS", "HEAD"])
+    def catch_all_subpath(subpath: str):
+        clean_sub = subpath.strip("/").lower()
+        if request.method == "OPTIONS":
+            return "", 204
+        if any(clean_sub.endswith(h) for h in ("health", "healthz", "ping")):
+            return health()
+        if clean_sub.endswith("bypass"):
+            return api_bypass()
+        if clean_sub.endswith("status"):
+            return admin_status()
+        if clean_sub.endswith("config"):
+            return api_config()
+        return index()
 else:
     app = None
 
@@ -1249,16 +1274,22 @@ class FallbackHTTPHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
         self.send_header("Access-Control-Allow-Headers", "*")
+        self.end_headers()
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = parsed.path.rstrip("/").lower()
         qs = urllib.parse.parse_qs(parsed.query)
 
-        if path == "/":
+        if path == "" or path == "/":
             index_path = os.path.join(BASE_DIR, "index.html")
             if os.path.exists(index_path):
                 try:
@@ -1275,7 +1306,7 @@ class FallbackHTTPHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "online", "developer": DEVELOPER})
             return
 
-        if path == "/health":
+        if any(path.endswith(h) for h in ("health", "healthz", "ping")):
             self._send_json({
                 "status": "healthy",
                 "service": "ShortnerBypass",
@@ -1285,7 +1316,7 @@ class FallbackHTTPHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if path == "/bypass":
+        if path.endswith("bypass"):
             url = (qs.get("url") or qs.get("link") or [""])[0].strip()
             if not url:
                 self._send_json({"status": False, "message": "Missing 'url' query parameter"}, code=400)
@@ -1308,7 +1339,7 @@ class FallbackHTTPHandler(BaseHTTPRequestHandler):
                 engine.cleanup_job(job.id)
             return
 
-        if path == "/admin/status":
+        if path.endswith("status"):
             self._send_json({
                 "developer": DEVELOPER,
                 "version": VERSION,
@@ -1320,7 +1351,7 @@ class FallbackHTTPHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if path == "/api/config":
+        if path.endswith("config"):
             self._send_json({
                 "bot_configured": bool(BOT_TOKEN),
                 "bot_username": BOT_USERNAME,
@@ -1330,12 +1361,26 @@ class FallbackHTTPHandler(BaseHTTPRequestHandler):
             })
             return
 
-        self._send_json({"status": "not_found"}, code=404)
+        # Fallback serve index.html for any proxy prefix
+        index_path = os.path.join(BASE_DIR, "index.html")
+        if os.path.exists(index_path):
+            try:
+                with open(index_path, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            except Exception:
+                pass
+        self._send_json({"status": "online", "developer": DEVELOPER})
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        if path == "/api/config":
+        path = parsed.path.rstrip("/").lower()
+        if path.endswith("config"):
             content_len = int(self.headers.get("Content-Length", 0))
             post_body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
             try:
@@ -1417,13 +1462,25 @@ ProviderBotz Auto Bypass Bot (v{VERSION})
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HTTP Health Server: running (Port {PORT})
 Public Bot API: {'online (@' + BOT_USERNAME + ')' if BOT_TOKEN else 'waiting for token'}
-Bypass Engine: {'connected' if engine.connected else 'offline'}
-Mode: High-Performance Async Telethon + Flask
+Bypass Engine: {'connected (Dual Telethon Userbot)' if engine.connected else 'standby (Direct Resolver Online — add session via bot /start)'}
+Mode: High-Performance Async Telethon + WebApp
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """, flush=True)
 
     while True:
         await asyncio.sleep(3600)
+
+import signal
+
+def handle_clean_shutdown(signum, frame):
+    logger.info(f"Received signal {signum}. Stopping ShortnerBypass gracefully...")
+    sys.exit(0)
+
+try:
+    signal.signal(signal.SIGTERM, handle_clean_shutdown)
+    signal.signal(signal.SIGINT, handle_clean_shutdown)
+except Exception:
+    pass
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_http_server, daemon=True, name="HTTPThread")
